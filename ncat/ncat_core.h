@@ -225,6 +225,11 @@ struct options {
     char *sslciphers;
     char *sslalpn;
     int zerobyte;
+    
+    int tcpls;
+    char *tcplskey;
+    char *tcplscert;
+    char *tcplsciphers;
 };
 
 extern struct options o;

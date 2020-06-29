@@ -157,6 +157,11 @@
 #include "ncat_lua.h"
 #endif
 
+#ifdef HAVE_PICOTCPLS
+#include "picotls.h"
+#include "picotls/openssl.h"
+#endif
+
 static int ncat_connect_mode(void);
 static int ncat_listen_mode(void);
 
@@ -367,6 +372,11 @@ int main(int argc, char *argv[])
         {"ssl-ciphers",     optional_argument,  NULL,         0},
         {"ssl-alpn",        optional_argument,  NULL,         0},
 #endif
+#if HAVE_PICOTCPLS
+        {"tcpls",           no_argument,        &o.tcpls,     1},
+        {"tcpls-cert",      required_argument,  NULL,         0},
+        {"tcpls-key",       required_argument,  NULL,         0},
+#endif
         {0, 0, 0, 0}
     };
 
@@ -495,6 +505,15 @@ int main(int argc, char *argv[])
             o.zerobyte = 1;
             break;
         case 0:
+#if HAVE_PICOTCPLS
+            if (strcmp(long_options[option_index].name, "tcpls-cert") == 0) {
+                o.tcpls = 1;
+                o.tcplscert = Strdup(optarg);
+            } else if (strcmp(long_options[option_index].name, "tcpls-key") == 0) {
+                o.tcpls = 1;
+                o.tcplskey = Strdup(optarg);
+            } else 
+#endif         
             if (strcmp(long_options[option_index].name, "version") == 0) {
                 print_banner();
                 exit(EXIT_SUCCESS);
@@ -724,6 +743,11 @@ int main(int argc, char *argv[])
         bye("OpenSSL isn't compiled in. The --ssl option cannot be chosen.");
 #endif
 
+#ifndef HAVE_PICOTCPLS
+    if (o.tcpls)
+        bye("PICOTCPLS isn't compiled in. The --tcpls option cannot be chosen.");
+#endif
+
     if (o.normlog)
         o.normlogfd = ncat_openlog(o.normlog, o.append);
     if (o.hexlog)
@@ -746,6 +770,10 @@ int main(int argc, char *argv[])
         if (o.ssl)
             bye("SSL option not supported when using Unix domain sockets.");
 #endif
+#ifdef HAVE_PICOTCPLS
+        if (o.tcpls)
+            bye("TCPLS option not supported when using Unix domain sockets.");
+#endif
         if (o.broker)
             bye("Connection brokering not supported when using Unix domain sockets.");
         if (srcport != -1)
@@ -762,6 +790,10 @@ int main(int argc, char *argv[])
 #ifdef HAVE_OPENSSL
         if (o.ssl)
             bye("SSL option not supported when using vsock sockets.");
+#endif
+#ifdef HAVE_PICOTCPLS
+        if (o.tcpls)
+            bye("TCPLS option not supported when using vsock sockets.");
 #endif
         if (o.broker)
             bye("Connection brokering not supported when using vsock sockets.");
@@ -1045,6 +1077,13 @@ connection brokering should work.");
 #ifdef HAVE_LUA
     if (o.execmode == EXEC_LUA)
         lua_setup();
+#endif
+
+#if HAVE_OPENSSL
+#if HAVE_PICOTCPLS
+    if(o.ssl && o.tcpls)
+        bye("OpenSSL (--ssl) and TCPLS (--tcpls) can not been specify together"); 
+#endif
 #endif
 
     if (o.listen)

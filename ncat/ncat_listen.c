@@ -271,6 +271,11 @@ static int ncat_listen_stream(int proto)
     }
 #endif
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls)
+       setup_tcpls_listen();
+#endif
+
 /* Not sure if this problem exists on Windows, but fcntl and /dev/null don't */
 #ifndef WIN32
     /* Check whether stdin is closed. Because we treat this fd specially, we
