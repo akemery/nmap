@@ -292,6 +292,12 @@ static int ncat_listen_stream(int proto)
     }
 #endif
 
+#ifdef HAVE_PICOTLS
+    if(o.tcpls){
+        
+    }
+#endif
+
     /* We need a list of fds to keep current fdmax. The second parameter is a
        number added to the supplied connection limit, that will compensate
        maxfds for the added by default listen and stdin sockets. */

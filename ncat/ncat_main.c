@@ -391,7 +391,7 @@ int main(int argc, char *argv[])
     while (1) {
         /* handle command line arguments */
         int option_index;
-        int c = getopt_long(argc, argv, "46UCc:e:g:G:i:km:hp:d:lo:x:ts:uvw:nz",
+        int c = getopt_long(argc, argv, "46UCc:e:g:G:i:km:hp:d:lo:x:ts:uvw:nzb:B:a:A:",
                             long_options, &option_index);
 
         /* That's the end of the options. */
@@ -504,8 +504,26 @@ int main(int argc, char *argv[])
         case 'z':
             o.zerobyte = 1;
             break;
+#ifdef HAVE_PICOTCPLS
+        case 'a':
+            if(tcpls_get_addrs(1, 0, optarg))
+		bye("You should specify ipv4 addresses followed by comma");
+            break;
+        case 'A':
+            if(tcpls_get_addrs(0, 0, optarg))
+		bye("You should specify ipv6 addresses followed by comma");
+            break;
+        case 'b':
+            if(tcpls_get_addrs(1, 1, optarg))
+		bye("You should specify ipv4 addresses followed by comma");
+            break;
+        case 'B':
+            if(tcpls_get_addrs(0, 1, optarg))
+		bye("You should specify ipv4 addresses followed by comma");
+            break;
+#endif
         case 0:
-#if HAVE_PICOTCPLS
+#ifdef HAVE_PICOTCPLS
             if (strcmp(long_options[option_index].name, "tcpls-cert") == 0) {
                 o.tcpls = 1;
                 o.tcplscert = Strdup(optarg);
