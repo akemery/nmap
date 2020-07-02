@@ -1041,13 +1041,23 @@ int ncat_connect(void)
     nsock_pool_set_broadcast(mypool, 1);
 
 #ifdef HAVE_OPENSSL
+    if(o.ssl){
 #ifdef HAVE_DTLS_CLIENT_METHOD
-    if(o.proto == IPPROTO_UDP)
-        set_ssl_ctx_options((SSL_CTX *) nsock_pool_dtls_init(mypool, 0));
-    else
+        if(o.proto == IPPROTO_UDP)
+            set_ssl_ctx_options((SSL_CTX *) nsock_pool_dtls_init(mypool, 0));
+        else
 #endif
-        set_ssl_ctx_options((SSL_CTX *) nsock_pool_ssl_init(mypool, 0));
+            set_ssl_ctx_options((SSL_CTX *) nsock_pool_ssl_init(mypool, 0));
+    }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+       setup_tcpls_ctx();
+       tcpls_add_addrs(0);
+    }
+#endif
+
 
     if (!o.proxytype) {
 #if HAVE_SYS_UN_H
@@ -1097,6 +1107,11 @@ int ncat_connect(void)
         } else
 #endif
         {
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls){
+                do_tcpls_connect();
+            }
+#endif
             /* Add connection to first resolved address. */
             try_nsock_connect(mypool, targetaddrs);
         }

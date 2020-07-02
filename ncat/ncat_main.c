@@ -376,6 +376,10 @@ int main(int argc, char *argv[])
         {"tcpls",           no_argument,        &o.tcpls,     1},
         {"tcpls-cert",      required_argument,  NULL,         0},
         {"tcpls-key",       required_argument,  NULL,         0},
+        {"a",               required_argument,  NULL,         'a'},
+        {"A",               required_argument,  NULL,         'A'},
+        {"b",               required_argument,  NULL,         'b'},
+        {"B",               required_argument,  NULL,         'B'},
 #endif
         {0, 0, 0, 0}
     };
@@ -386,6 +390,11 @@ int main(int argc, char *argv[])
 
 #ifdef WIN32
     windows_init();
+#endif
+
+#ifdef HAVE_PICOTLS
+    peeraddrs = (struct sockaddr_list *)safe_zalloc(sizeof(struct sockaddr_list));
+    oursaddrs = (struct sockaddr_list *)safe_zalloc(sizeof(struct sockaddr_list));
 #endif
 
     while (1) {
@@ -506,20 +515,22 @@ int main(int argc, char *argv[])
             break;
 #ifdef HAVE_PICOTCPLS
         case 'a':
-            if(tcpls_get_addrs(1, 0, optarg))
+            if(tcpls_get_addrsv2(AF_INET, 0, optarg)!=0)
 		bye("You should specify ipv4 addresses followed by comma");
             break;
         case 'A':
-            if(tcpls_get_addrs(0, 0, optarg))
+            if(tcpls_get_addrsv2(AF_INET6, 0, optarg)!=0)
 		bye("You should specify ipv6 addresses followed by comma");
             break;
         case 'b':
-            if(tcpls_get_addrs(1, 1, optarg))
+            if(tcpls_get_addrsv2(AF_INET, 1, optarg)!=0)
 		bye("You should specify ipv4 addresses followed by comma");
             break;
         case 'B':
-            if(tcpls_get_addrs(0, 1, optarg))
-		bye("You should specify ipv4 addresses followed by comma");
+            printf("tyty  %s\n", optarg);
+            if(tcpls_get_addrsv2(AF_INET6, 1, optarg)!=0)
+		bye("You should specify ipv6 addresses followed by comma");
+	    printf("huuuu\n");
             break;
 #endif
         case 0:

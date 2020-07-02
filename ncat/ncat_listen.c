@@ -273,7 +273,7 @@ static int ncat_listen_stream(int proto)
 
 #ifdef HAVE_PICOTCPLS
     if(o.tcpls)
-       setup_tcpls_listen();
+       setup_tcpls_ctx();
 #endif
 
 /* Not sure if this problem exists on Windows, but fcntl and /dev/null don't */
@@ -292,9 +292,10 @@ static int ncat_listen_stream(int proto)
     }
 #endif
 
-#ifdef HAVE_PICOTLS
+#ifdef HAVE_PICOTCPLS
     if(o.tcpls){
-        
+        tcpls_add_addrs(1);
+        do_tcpls_bind();
     }
 #endif
 
