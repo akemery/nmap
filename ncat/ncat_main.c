@@ -900,6 +900,7 @@ int main(int argc, char *argv[])
     else
         o.portno = DEFAULT_NCAT_PORT;
 
+   
     /* Resolve the given source address */
     if (source) {
         int rc = 0;
@@ -1031,9 +1032,10 @@ int main(int argc, char *argv[])
     else {
         struct sockaddr_list *targetaddrs_item = targetaddrs;
         while (targetaddrs_item != NULL)
-        {
+        {   
             if (targetaddrs_item->addr.storage.ss_family == AF_INET)
                 targetaddrs_item->addr.in.sin_port = htons(o.portno);
+                
 #ifdef HAVE_IPV6
             else if (targetaddrs_item->addr.storage.ss_family == AF_INET6)
                 targetaddrs_item->addr.in6.sin6_port = htons(o.portno);

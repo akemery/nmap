@@ -107,6 +107,14 @@
 #define IPPROTO_SCTP 132
 #endif
 
+#if HAVE_PICOTCPLS
+#include <openssl/pem.h>
+#include <openssl/engine.h>
+
+#include "picotls.h"
+#include "picotls/openssl.h"
+#include "containers.h"
+#endif
 
 /* ------------------- CONSTANTS ------------------- */
 #define READ_BUFFER_SZ 8192
@@ -203,6 +211,10 @@ struct npool {
 #if HAVE_OPENSSL
   /* The SSL Context (options and such) */
   SSL_CTX *sslctx;
+#endif
+
+#if HAVE_PICOTCPLS
+  ptls_context_t *ptlsctx;
 #endif
 
   /* Optional proxy chain (NULL is not set). Can only be set once per NSP (using

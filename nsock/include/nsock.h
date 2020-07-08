@@ -251,6 +251,7 @@ void nsock_pool_set_device(nsock_pool nsp, const char *device);
  *  validation. */
 #define NSOCK_SSL_MAX_SPEED (1 << 0)
 nsock_ssl_ctx nsock_pool_ssl_init(nsock_pool ms_pool, int flags);
+nsock_ssl_ctx nsock_pool_tcpls_init(nsock_pool ms_pool, int flags);
 
 /* Initializes an Nsock pool to create a DTLS connect. This sets and internal
  * SSL_CTX, which is like a template that sets options for all connections that
@@ -612,6 +613,9 @@ nsock_event_id nsock_connect_udp(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handl
  * structure you are passing in. */
 nsock_event_id nsock_connect_ssl(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
                                  void *userdata, struct sockaddr *ss, size_t sslen, int proto, unsigned short port, nsock_ssl_session ssl_session);
+
+nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
+                                 void *userdata);
 
 /* Request ssl connection over already established TCP/SCTP connection.  nsiod
  * must be socket that is already connected to target using nsock_connect_tcp or

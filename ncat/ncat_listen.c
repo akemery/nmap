@@ -181,6 +181,7 @@ static fd_set sslpending_fds;
 static fd_list_t client_fdlist, broadcast_fdlist;
 
 static int listen_socket[NUM_LISTEN_ADDRS];
+
 /* Has stdin seen EOF? */
 static int stdin_eof = 0;
 static int crlf_state = 0;
@@ -235,7 +236,7 @@ static void sigchld_handler(int signum)
 
 static int ncat_listen_stream(int proto)
 {
-    int rc, i, fds_ready;
+    int rc, i, j, k, fds_ready;
     fd_set listen_fds;
     struct timeval tv;
     struct timeval *tvp = NULL;
@@ -245,7 +246,7 @@ static int ncat_listen_stream(int proto)
     FD_ZERO(&master_readfds);
     FD_ZERO(&master_writefds);
     FD_ZERO(&master_broadcastfds);
-    FD_ZERO(&listen_fds);
+    FD_ZERO(&listen_fds); 
 #ifdef HAVE_OPENSSL
     FD_ZERO(&sslpending_fds);
 #endif
@@ -295,15 +296,16 @@ static int ncat_listen_stream(int proto)
 #ifdef HAVE_PICOTCPLS
     if(o.tcpls){
         tcpls_add_addrs(1);
-        do_tcpls_bind();
-    }
+        do_tcpls_bind(&client_fdlist, &master_readfds, &listen_fds);
+    } else{
 #endif
+
+
 
     /* We need a list of fds to keep current fdmax. The second parameter is a
        number added to the supplied connection limit, that will compensate
        maxfds for the added by default listen and stdin sockets. */
     init_fdlist(&client_fdlist, sadd(o.conn_limit, num_listenaddrs + 1));
-
     for (i = 0; i < NUM_LISTEN_ADDRS; i++)
         listen_socket[i] = -1;
 
@@ -331,12 +333,16 @@ static int ncat_listen_stream(int proto)
 
         num_sockets++;
     }
+
     if (num_sockets == 0) {
         if (num_listenaddrs == 1)
             bye("Unable to open listening socket on %s: %s", inet_ntop_ez(&listenaddrs[0].storage, sizeof(listenaddrs[0].storage)), socket_strerror(socket_errno()));
         else
             bye("Unable to open any listening sockets.");
     }
+#ifdef HAVE_PICOTCPLS
+    }
+#endif
 
     add_fd(&client_fdlist, STDIN_FILENO);
 
@@ -344,12 +350,13 @@ static int ncat_listen_stream(int proto)
 
     if (o.idletimeout > 0)
         tvp = &tv;
+    printf("end conf\n");
 
     while (1) {
         /* We pass these temporary descriptor sets to fselect, since fselect
            modifies the sets it receives. */
         fd_set readfds = master_readfds, writefds = master_writefds;
-
+        
 
         if (o.debug > 1)
             logdebug("selecting, fdmax %d\n", client_fdlist.fdmax);
@@ -371,10 +378,13 @@ static int ncat_listen_stream(int proto)
 
         if (fds_ready == 0)
             bye("Idle timeout expired (%d ms).", o.idletimeout);
+        
+        
 
         for (i = 0; i < client_fdlist.nfds && fds_ready > 0; i++) {
             struct fdinfo *fdi = &client_fdlist.fds[i];
             int cfd = fdi->fd;
+           
             /* Loop through descriptors until there's something to read */
             if (!FD_ISSET(cfd, &readfds) && !FD_ISSET(cfd, &writefds))
                 continue;
@@ -474,6 +484,7 @@ static void handle_connection(int socket_accept)
 
     errno = 0;
     s.fd = accept(socket_accept, &remoteaddr.sockaddr, &ss_len);
+    
 
     if (s.fd < 0) {
         if (o.debug)
@@ -503,11 +514,20 @@ static void handle_connection(int socket_accept)
     if (!o.keepopen && !o.broker) {
         int i;
         for (i = 0; i < num_listenaddrs; i++) {
-            Close(listen_socket[i]);
-            FD_CLR(listen_socket[i], &master_readfds);
-            rm_fd(&client_fdlist, listen_socket[i]);
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls){
+                
+            } else{
+#endif
+                Close(listen_socket[i]);
+                FD_CLR(listen_socket[i], &master_readfds);
+                rm_fd(&client_fdlist, listen_socket[i]);
+#ifdef HAVE_PICOTCPLS
+            }
+#endif
         }
     }
+    
 
     if (o.verbose) {
 #if HAVE_SYS_UN_H
@@ -584,7 +604,7 @@ static void post_handle_connection(struct fdinfo sinfo)
         /* Now that a client is connected, pay attention to stdin. */
         if (!stdin_eof)
             FD_SET(STDIN_FILENO, &master_readfds);
-        if (!o.sendonly) {
+        if (!o.sendonly) { 
             /* add to our lists */
             FD_SET(sinfo.fd, &master_readfds);
             /* add it to our list of fds for maintaining maxfd */
