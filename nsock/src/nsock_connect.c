@@ -518,16 +518,15 @@ nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_han
   fatal("nsock_connect_tcpls called - but nsock was built w/o PICOTCPLS support.  QUITTING");
   return (nsock_event_id)0; /* UNREACHED */
 #else
-  struct sockaddr_storage *ss = (struct sockaddr_storage *)saddr;
   struct niod *nsi = (struct niod *)nsiod;
   struct npool *ms = (struct npool *)nsp;
   struct nevent *nse;
 
-  if (!ms->ptlsctx)
-    nsock_pool_tcpls_init(ms, 0);
+  /*if (!ms->ptlsctx)
+    nsock_pool_tcpls_init(ms, 0);*/
   assert(nsi->state == NSIOD_STATE_INITIAL || nsi->state == NSIOD_STATE_UNKNOWN);
 
-  nse = event_new(ms, NSE_TYPE_CONNECT_SSL, nsi, timeout_msecs, handler, userdata);
+  nse = event_new(ms, NSE_TYPE_CONNECT_TCPLS, nsi, timeout_msecs, handler, userdata);
   assert(nse);
   
   nsock_pool_add_event(ms, nse);

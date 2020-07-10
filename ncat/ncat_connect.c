@@ -1150,8 +1150,10 @@ int ncat_connect(void)
         post_connect(mypool, cs.sock_nsi);
     }
 
+    
     /* connect */
     rc = nsock_loop(mypool, -1);
+    
     
     free_sockaddr_list(targetaddrs);
     if (o.verbose) {
@@ -1177,16 +1179,6 @@ int ncat_connect(void)
 
 static void try_nsock_connect(nsock_pool nsp, struct sockaddr_list *conn_addr)
 {
-
-#ifdef HAVE_PICOTCPLS
-    if(o.tcpls){
-        nsock_connect_tcpls(nsp, cs.sock_nsi, connect_handler,
-                            o.conntimeout, (void *)conn_addr->next,
-                            &conn_addr->addr.sockaddr, conn_addr->addrlen,
-                            o.proto, inet_port(&conn_addr->addr),
-                            NULL);
-    } else
-#endif
 
 #ifdef HAVE_OPENSSL
     if (o.ssl) {
@@ -1245,7 +1237,7 @@ static void connect_handler(nsock_pool nsp, nsock_event evt, void *data)
     enum nse_type type = nse_type(evt);
     struct sockaddr_list *next_addr = (struct sockaddr_list *)data;
 
-    ncat_assert(type == NSE_TYPE_CONNECT || type == NSE_TYPE_CONNECT_SSL);
+    ncat_assert(type == NSE_TYPE_CONNECT || type == NSE_TYPE_CONNECT_SSL || type == NSE_TYPE_CONNECT_TCPLS);
 
     if (status == NSE_STATUS_ERROR || status == NSE_STATUS_TIMEOUT) {
         /* If there are more resolved addresses, try connecting to next one */

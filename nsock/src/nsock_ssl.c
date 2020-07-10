@@ -80,6 +80,7 @@
 
 extern struct timeval nsock_tod;
 
+
 static SSL_CTX *ssl_init_helper(const SSL_METHOD *method) {
   SSL_CTX *ctx;
 
@@ -153,6 +154,7 @@ nsock_ssl_ctx nsock_pool_ssl_init(nsock_pool ms_pool, int flags) {
     ms->sslctx = ssl_init_common();
   return nsock_pool_ssl_init_helper(ms, flags);
 }
+
 
 #ifdef HAVE_DTLS_CLIENT_METHOD
 

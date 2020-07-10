@@ -181,6 +181,10 @@ nsock_pool nsock_pool_new(void *userdata) {
   nsp->sslctx = NULL;
 #endif
 
+#if HAVE_PICOTCLS
+  nsp->ptlsctx = NULL;
+#endif
+
   nsp->px_chain = NULL;
 
   return (nsock_pool)nsp;

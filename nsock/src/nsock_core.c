@@ -238,6 +238,7 @@ static int iod_add_event(struct niod *iod, struct nevent *nse) {
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       if (iod->first_connect)
         gh_list_insert_before(&nsp->connect_events,
                               iod->first_connect, &nse->nodeq_io);
@@ -345,6 +346,13 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
   int sslconnect_inprogress = 0;
 #endif
 
+#if HAVE_PICOTCPLS
+    if (nse->type == NSE_TYPE_CONNECT_TCPLS &&
+        nse->status == NSE_STATUS_SUCCESS){
+        printf("TCPLS\n");
+    }
+#endif
+
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->status = status;
     nse->event_done = 1;
@@ -362,7 +370,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
         nse->status = NSE_STATUS_ERROR;
         nse->errnum = optval;
     }
-
+    
     /* Now special code for the SSL case where the TCP connection was successful. */
     if (nse->type == NSE_TYPE_CONNECT_SSL &&
         nse->status == NSE_STATUS_SUCCESS) {
@@ -966,6 +974,7 @@ void process_event(struct npool *nsp, gh_list_t *evlist, struct nevent *nse, int
     switch (nse->type) {
       case NSE_TYPE_CONNECT:
       case NSE_TYPE_CONNECT_SSL:
+      case NSE_TYPE_CONNECT_TCPLS:
         if (ev != EV_NONE)
           handle_connect_result(nsp, nse, NSE_STATUS_SUCCESS);
         if (event_timedout(nse))
@@ -1257,6 +1266,7 @@ void nsock_pool_add_event(struct npool *nsp, struct nevent *nse) {
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       if (!nse->event_done) {
         assert(nse->iod->sd >= 0);
         socket_count_read_inc(nse->iod);

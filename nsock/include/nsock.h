@@ -324,7 +324,8 @@ enum nse_type {
   NSE_TYPE_WRITE = 3,
   NSE_TYPE_TIMER = 4,
   NSE_TYPE_PCAP_READ = 5,
-  NSE_TYPE_MAX = 6,
+  NSE_TYPE_CONNECT_TCPLS = 6,
+  NSE_TYPE_MAX = 7,
 };  /* At some point I was considering a NSE_TYPE_START and NSE_TYPE_CUSTOM */
 
 /* Find the type of an event that spawned a callback */
@@ -616,6 +617,7 @@ nsock_event_id nsock_connect_ssl(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handl
 
 nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
                                  void *userdata);
+void nsock_iod_tcpls_new(nsock_iod nsi, int sd);
 
 /* Request ssl connection over already established TCP/SCTP connection.  nsiod
  * must be socket that is already connected to target using nsock_connect_tcp or

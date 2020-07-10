@@ -210,8 +210,19 @@ int tcpls_add_addrs(unsigned int is_server){
         if(ours_addrs[i].storage.ss_family == AF_INET6)
             tcpls_add_v6(tcpls->tls, (struct sockaddr_in6*)&ours_addrs[i], 0, settopeer, 1);
     }
-    printf("end add_addrs\n");
     return 0;
+}
+
+static nsock_iod tcpls_new_iod(nsock_pool nsp, int sd, struct sockaddr_storage *v4, size_t ssv4,
+                              struct sockaddr_storage *v6, size_t ssv6 ){
+    nsock_iod nsi = nsock_iod_new2(nsp, sd, NULL);
+    if(nsi == NULL)
+        return NULL;
+    if(v4 != NULL)
+        nsock_iod_set_localaddr(nsi, v4, ssv4);
+    if(v6 != NULL)
+        nsock_iod_set_localaddr(nsi, v6, ssv6);
+    return nsi;
 }
 
 int do_tcpls_connect(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler){
@@ -220,6 +231,7 @@ int do_tcpls_connect(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler){
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
     connect_info_t *con;
+    nsock_iod nsi;
     int i, err = tcpls_connect(tcpls->tls, NULL, NULL, &timeout);
     if (err){
         fprintf(stderr, "tcpls_connect failed with err %d", err);
@@ -227,13 +239,20 @@ int do_tcpls_connect(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler){
     }
     for(i = 0; i < tcpls->connect_infos->size; i++){
         con = list_get(tcpls->connect_infos, i);
-        printf("con_state %d con_sd %d\n", con->state, con->socket);
-        nsock_connect_tcpls(nsp, nsiod, handler, timeout, NULL);
+        struct sockaddr_storage *src = (con->src == NULL) ? NULL : (struct sockaddr_storage *) &con->src->addr;
+        struct sockaddr_storage *src6 = (con->src == NULL) ? NULL : (struct sockaddr_storage *) &con->src6->addr;
+        if(!con->is_primary)
+            nsi = tcpls_new_iod(nsp, con->socket, src, sizeof(src), src6, sizeof(src6));
+        else {
+            nsi = nsiod;
+            if(src) nsock_iod_set_localaddr(nsi, src, sizeof(src));
+            if(src6) nsock_iod_set_localaddr(nsi, src6, sizeof(src6));
+            nsock_iod_tcpls_new(nsi, con->socket);
+        }
+        nsock_connect_tcpls(nsp, nsi, handler, 5, NULL);
     }
     return 0;
 }
-
-
 
 int do_tcpls_bind(fd_list_t *client_fdlist, fd_set *master_readfds, fd_set *listen_fds){
     int one = 1, i;
@@ -270,13 +289,9 @@ int do_tcpls_bind(fd_list_t *client_fdlist, fd_set *master_readfds, fd_set *list
             return -1;
         }
         unblock_socket(listenfd[i]);
-        printf("add 1 %d\n", i);
         FD_SET(listenfd[i], master_readfds);
-        printf("add 2 %d\n", i);
         add_fd(client_fdlist, listenfd[i]);
-
         FD_SET(listenfd[i], listen_fds);
-        printf("add %d\n", i);
     }
     return 0;
 }

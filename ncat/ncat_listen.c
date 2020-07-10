@@ -350,8 +350,6 @@ static int ncat_listen_stream(int proto)
 
     if (o.idletimeout > 0)
         tvp = &tv;
-    printf("end conf\n");
-
     while (1) {
         /* We pass these temporary descriptor sets to fselect, since fselect
            modifies the sets it receives. */
