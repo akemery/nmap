@@ -102,6 +102,15 @@ extern "C" {
  * can always initiate another read request to ask for more. */
 #define NSOCK_READ_CHUNK_SIZE 0x8FFFF
 
+#if HAVE_PICOTCPLS
+#include <openssl/pem.h>
+#include <openssl/engine.h>
+
+#include "picotls.h"
+#include "picotls/openssl.h"
+#include "containers.h"
+#endif
+
 struct npool;
 struct niod;
 struct nevent;
@@ -617,7 +626,7 @@ nsock_event_id nsock_connect_ssl(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handl
 
 nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
                                  void *userdata);
-void nsock_iod_tcpls_new(nsock_iod nsi, int sd);
+void nsock_iod_tcpls_new(nsock_iod nsi, int sd, tcpls_t *tcpls);
 
 /* Request ssl connection over already established TCP/SCTP connection.  nsiod
  * must be socket that is already connected to target using nsock_connect_tcp or

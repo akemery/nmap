@@ -58,7 +58,9 @@ nsock_ssl_ctx nsock_pool_tcpls_init(nsock_pool ms_pool, int flags) {
   return nsock_pool_tcpls_init_helper(ms, flags);
 }
 
-void nsock_iod_tcpls_new(nsock_iod nsi, int sd){
+void nsock_iod_tcpls_new(nsock_iod nsi, int sd, tcpls_t *tcpls){
   nsi->sd = dup(sd);
+  nsi->tcpls_use_for_handshake = 1;
+  nsi->tcpls = tcpls;
 }
 #endif

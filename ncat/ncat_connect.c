@@ -1316,9 +1316,14 @@ static void post_connect(nsock_pool nsp, nsock_iod iod)
 
     /* Start the initial reads. */
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+        if (!o.sendonly && !o.zerobyte)
+            nsock_read(nsp, iod, read_socket_handler, -1, NULL);
+    } else
+#endif
     if (!o.sendonly && !o.zerobyte)
         nsock_read(nsp, cs.sock_nsi, read_socket_handler, -1, NULL);
-
     if (!o.recvonly && !o.zerobyte)
         nsock_readbytes(nsp, cs.stdin_nsi, read_stdin_handler, -1, NULL, 0);
 

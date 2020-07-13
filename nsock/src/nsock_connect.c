@@ -525,7 +525,6 @@ nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_han
   /*if (!ms->ptlsctx)
     nsock_pool_tcpls_init(ms, 0);*/
   assert(nsi->state == NSIOD_STATE_INITIAL || nsi->state == NSIOD_STATE_UNKNOWN);
-
   nse = event_new(ms, NSE_TYPE_CONNECT_TCPLS, nsi, timeout_msecs, handler, userdata);
   assert(nse);
   

@@ -234,7 +234,6 @@ static void update_events(struct niod * iod, struct npool *ms, struct nevent *ns
  */
 static int iod_add_event(struct niod *iod, struct nevent *nse) {
   struct npool *nsp = iod->nsp;
-
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
@@ -345,13 +344,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
 #else
   int sslconnect_inprogress = 0;
 #endif
-
-#if HAVE_PICOTCPLS
-    if (nse->type == NSE_TYPE_CONNECT_TCPLS &&
-        nse->status == NSE_STATUS_SUCCESS){
-        printf("TCPLS\n");
-    }
-#endif
+   
 
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->status = status;
@@ -404,6 +397,21 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
     } else {
       /* This is not an SSL connect (in which case we are always done), or the
        * TCP connect() underlying the SSL failed (in which case we are also done */
+#if HAVE_PICOTCPLS
+    if (nse->type == NSE_TYPE_CONNECT_TCPLS && !nse->event_done) {
+        if(iod->tcpls_use_for_handshake){
+            ptls_handshake_properties_t tcpls_prop = {NULL};
+            tcpls_prop.client.mpjoin = 1;
+            tcpls_prop.socket = iod->sd;
+            assert(iod->tcpls->tls);
+            tcpls_handshake(iod->tcpls->tls, &tcpls_prop);
+            printf("HQHWHEHEHRHRHR\n");
+            
+        }
+        nse->event_done = 1;
+    }
+    else
+#endif
       nse->event_done = 1;
     }
   } else {
@@ -510,6 +518,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
     }
   }
 #endif
+
 }
 
 static int errcode_is_failure(int err) {
@@ -969,7 +978,6 @@ void process_event(struct npool *nsp, gh_list_t *evlist, struct nevent *nse, int
                       nse->id,
                       (long)TIMEVAL_MSEC_SUBTRACT(nse->timeout, nsock_tod),
                       nse->event_done);
-
   if (!nse->event_done) {
     switch (nse->type) {
       case NSE_TYPE_CONNECT:
@@ -1261,7 +1269,6 @@ void nsock_pool_add_event(struct npool *nsp, struct nevent *nse) {
     /* This event is expirable, add it to the queue */
     gh_heap_push(&nsp->expirables, &nse->expire);
   }
-
   /* Now we do the event type specific actions */
   switch (nse->type) {
     case NSE_TYPE_CONNECT:

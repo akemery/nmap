@@ -247,7 +247,7 @@ int do_tcpls_connect(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler){
             nsi = nsiod;
             if(src) nsock_iod_set_localaddr(nsi, src, sizeof(src));
             if(src6) nsock_iod_set_localaddr(nsi, src6, sizeof(src6));
-            nsock_iod_tcpls_new(nsi, con->socket);
+            nsock_iod_tcpls_new(nsi, con->socket, tcpls);
         }
         nsock_connect_tcpls(nsp, nsi, handler, 5, NULL);
     }

@@ -312,6 +312,11 @@ struct niod {
   void *pcap;
 
   struct proxy_chain_context *px_ctx;
+  
+#if HAVE_PICOTCPLS
+  unsigned int tcpls_use_for_handshake:1;
+  tcpls_t *tcpls;
+#endif
 
 };
 
