@@ -383,6 +383,29 @@ int fdinfo_recv(struct fdinfo *fdn, char *buf, size_t size)
         return n;
     }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+   if(o.tcpls && fdn->tcpls != NULL){
+        //int recv_data = 0;
+        /*if(!ptls_handshake_is_complete(fdn->tcpls->tls)){
+            printf("handshake continue on receive\n");
+            ptls_handshake_properties_t prop = {{{{NULL}}}};
+            memset(&prop, 0, sizeof(prop));
+            prop.socket = fdn->fd;
+            if ((n = tcpls_handshake(fdn->tcpls->tls, &prop)) != 0) 
+                printf("handshake failed on receive %d\n", n);
+        }*/
+        //do{
+        n = tcpls_receive(fdn->tcpls->tls, buf, size, NULL);
+        if(n<0)
+            logdebug("TCPLS_recv error on %d:\n", fdn->fd);
+        //recv_data+=n;
+        //} while(n>0);
+        printf("recv on tcpls %d\n", n);
+        return n;
+    }
+#endif
+
     return recv(fdn->fd, buf, size, 0);
 }
 
@@ -391,6 +414,12 @@ int fdinfo_pending(struct fdinfo *fdn)
 #ifdef HAVE_OPENSSL
     if (o.ssl && fdn->ssl)
         return SSL_pending(fdn->ssl);
+#endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls && fdn->tcpls){
+       //return tcpls_pending(fdn->tcpls->tls);
+    }
 #endif
     return 0;
 }
@@ -426,7 +455,6 @@ int ncat_recv(struct fdinfo *fdn, char *buf, size_t size, int *pending)
        work for us. Indicate to the caller that this function must be called
        again to get more data. */
     *pending = fdinfo_pending(fdn);
-
     return n;
 }
 
@@ -451,6 +479,23 @@ int fdinfo_send(struct fdinfo *fdn, const char *buf, size_t size)
         return n;
     }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls && fdn->tcpls != NULL){
+        int streamid;
+        if(fdn->tcpls->streams->size == 0)
+            streamid = 0;
+        else 
+            streamid = fdn->tcpls->streams->size;
+        n = tcpls_send(fdn->tcpls->tls, streamid, buf, size);
+        printf("sending on tcpls %d %d\n", n, fdn->tcpls->streams->size);
+        if(n<0)
+            logdebug("TCPLS_send error on %d:\n", fdn->fd);
+        
+        return n;
+    }
+#endif
+
     return send(fdn->fd, buf, size, 0);
 }
 
@@ -495,6 +540,8 @@ int ncat_broadcast(fd_set *fds, const fd_list_t *fdlist, const char *msg, size_t
 
     if (o.recvonly)
         return size;
+        
+    printf("broadcast\n");
 
     ret = 0;
     for (i = 0; i <= fdlist->fdmax; i++) {

@@ -1053,8 +1053,9 @@ int ncat_connect(void)
 
 #ifdef HAVE_PICOTCPLS
     if(o.tcpls){
-        set_tcpls_ctx_options();
-        tcpls_add_addrs(0);
+        set_tcpls_ctx_options(0);
+        do_init_tcpls(0);
+        do_tcpls_add_addrs(0,NULL);
     }
 #endif
 
@@ -1378,7 +1379,7 @@ static void read_stdin_handler(nsock_pool nsp, nsock_event evt, void *data)
         if (fix_line_endings(buf, &nbytes, &tmp, &cs.crlf_state))
             buf = tmp;
     }
-
+    
     nsock_write(nsp, cs.sock_nsi, write_socket_handler, -1, NULL, buf, nbytes);
     ncat_log_send(buf, nbytes);
 
@@ -1395,7 +1396,6 @@ static void read_socket_handler(nsock_pool nsp, nsock_event evt, void *data)
     char *buf;
     int nbytes;
     
-
     ncat_assert(type == NSE_TYPE_READ);
 
     if (status == NSE_STATUS_EOF) {

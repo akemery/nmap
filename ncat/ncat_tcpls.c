@@ -17,6 +17,7 @@
 
 static ptls_context_t *ctx;
 static tcpls_t *tcpls;
+static list_t *tcpls_con_l;
 
 static void tcpls_init(unsigned int is_server){
   FILE *fp;
@@ -54,11 +55,6 @@ static void tcpls_init(unsigned int is_server){
    ctx->support_tcpls_options = 1;
    tcpls = tcpls_new(&ctx,is_server);
 }
-#if 0
-int tcpls_handshake(ptls *tls, ptls_hand){
-  return tcpls_hanshake(ptls, properties);
-}
-#endif
 
 
 static int load_private_key(ptls_context_t *ctx, const char *fn){
@@ -81,32 +77,6 @@ static int load_private_key(ptls_context_t *ctx, const char *fn){
     return(0);
 }
 
-
-ptls_context_t *setup_tcpls_ctx(void){
-    if(ctx)
-        goto done;
-    ERR_load_crypto_strings();
-    OpenSSL_add_all_algorithms();
-    ctx = (ptls_context_t *)malloc(sizeof(ctx));
-    if(o.tcplscert){
-        if (ptls_load_certificates(ctx, (char *)o.tcplscert) != 0)
-            bye("failed to load certificate:%s:%s\n", o.tcplscert, strerror(errno));
-    }
-    if(o.tcplskey){
-        if(load_private_key(ctx, (char*)o.tcplskey) != 0)
-            bye("failed to load key:%s:%s\n", o.tcplskey, strerror(errno));
-    }
-    ctx->support_tcpls_options = 1;
-    ctx->random_bytes = ptls_openssl_random_bytes;
-    ctx->key_exchanges = ptls_openssl_key_exchanges;
-    ctx->cipher_suites = ptls_openssl_cipher_suites;
-    ctx->get_time = &ptls_get_time;
-    ctx->update_open_count = NULL;
-done:
-    return ctx;
-}
-
-
 static void init_tcpls_options(void){
     tcpls_o->timeoutval = -1;
     tcpls_o->second = -1;
@@ -114,7 +84,6 @@ static void init_tcpls_options(void){
     tcpls_o->nb_ours = 0;
     return;
 };
-
 
 
 int tcpls_get_addrsv2(int af, unsigned int ours, char *optarg){
@@ -192,11 +161,16 @@ static int tcpls_resolve_addrs(int is_server){
     return 0;
 }
 
-int tcpls_add_addrs(unsigned int is_server){
-    int i;
+int do_init_tcpls(int is_server){
     tcpls = (tcpls_t *)tcpls_new(ctx,  is_server);
+    tcpls_con_l = new_list(sizeof(struct tcpls_con),tcpls_o->nb_ours);
     if(tcpls_resolve_addrs(is_server)!=0)
        return(-1);
+    return 0;
+}
+
+static int tcpls_add_addrs(unsigned int is_server, tcpls_t * tcpls){
+    int i;
     int settopeer = tcpls->tls->is_server;
     for(i = 0; i < tcpls_o->nb_peers; i++){
         if(peer_addrs[i].storage.ss_family == AF_INET)
@@ -212,6 +186,14 @@ int tcpls_add_addrs(unsigned int is_server){
     }
     return 0;
 }
+
+int do_tcpls_add_addrs(unsigned int is_server, tcpls_t * ctcpls){
+    if(ctcpls == NULL)
+        return tcpls_add_addrs(is_server, tcpls);
+    else
+        return tcpls_add_addrs(is_server, ctcpls);
+}
+
 
 static nsock_iod tcpls_new_iod(nsock_pool nsp, int sd, struct sockaddr_storage *v4, size_t ssv4,
                               struct sockaddr_storage *v6, size_t ssv6 ){
@@ -297,18 +279,21 @@ int do_tcpls_bind(fd_list_t *client_fdlist, fd_set *master_readfds, fd_set *list
 }
 
 
-ptls_context_t *set_tcpls_ctx_options(void){
+ptls_context_t *set_tcpls_ctx_options(int is_server){
     if(ctx)
         goto done;
     ERR_load_crypto_strings();
     OpenSSL_add_all_algorithms();
-    ctx = (ptls_context_t *)malloc(sizeof(ctx));
+    ptls_key_exchange_algorithm_t *key_exchanges[128] = {NULL};
+    ptls_cipher_suite_t *cipher_suites[128] = {NULL};
+    ctx = (ptls_context_t *)malloc(sizeof(*ctx));
+    memset(ctx, 0, sizeof(*ctx));
     if(o.tcplscert){
         if (ptls_load_certificates(ctx, (char *)o.tcplscert) != 0)
             bye("failed to load certificate:%s:%s\n", o.tcplscert, strerror(errno));
     }
     if(o.tcplskey){
-        if(load_private_key(ctx, (char*)o.tcplskey) != 0)
+        if(load_private_key(ctx, (char*)o.tcplskey)!=0)
             bye("failed to load key:%s:%s\n", o.tcplskey, strerror(errno));
     }
     ctx->support_tcpls_options = 1;
@@ -316,7 +301,51 @@ ptls_context_t *set_tcpls_ctx_options(void){
     ctx->key_exchanges = ptls_openssl_key_exchanges;
     ctx->cipher_suites = ptls_openssl_cipher_suites;
     ctx->get_time = &ptls_get_time;
-    ctx->update_open_count = NULL;
 done:
     return ctx;
+}
+
+int do_tcpls_accept(int socket, struct sockaddr *sockaddr, socklen_t  *sslen){
+    int cfd = accept(socket, sockaddr, sslen);
+    if(cfd < 0) return cfd;
+    fprintf(stderr, "Accepting a new connection %d\n", cfd);
+    struct tcpls_con *con = (struct tcpls_con *)malloc(sizeof(*con));
+    tcpls_t *new_tcpls = tcpls_new(ctx,  1);
+    new_tcpls->socket_primary =  1;
+    tcpls_add_addrs(1, new_tcpls);
+    con->sd = cfd;
+    con->tcpls = new_tcpls;
+    assert(con->tcpls->tls->is_server);
+    list_add(tcpls_con_l, con);
+    if (tcpls_accept(new_tcpls, cfd, NULL, 0) < 0)
+        fprintf(stderr, "tcpls_accept returned -1");
+    return cfd;
+}
+
+static int handle_mpjoin(int socket, uint8_t *connid, uint8_t *cookie, uint32_t transportid, void *cbdata) {
+    printf("QHQHQH\n");
+    return 0;
+}
+int do_tcpls_handshake(struct fdinfo *fdi){
+    int i, ret;
+    for(i = 0; i < tcpls_con_l->size ; i++){
+        struct tcpls_con *con = list_get(tcpls_con_l, i);
+        if(con->sd == fdi->fd){
+            while (!ptls_handshake_is_complete(con->tcpls->tls)) {
+                ptls_handshake_properties_t prop = {{{{NULL}}}};
+                memset(&prop, 0, sizeof(prop));
+                prop.socket = fdi->fd;
+                assert(con->tcpls);
+                assert(con->tcpls->tls);
+                assert(con->tcpls->tls->is_server);
+                assert(con->tcpls->tls->ctx);
+                assert(con->tcpls->tls->ctx->support_tcpls_options);
+                if ((ret = tcpls_handshake(con->tcpls->tls, &prop)) != 0) 
+                    fprintf(stderr, "tcpls_handshake failed with ret %d\n", ret);
+                fdi->tcpls = con->tcpls;
+            }
+            return 0;
+        }
+    }
+    return 1;
 }

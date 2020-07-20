@@ -398,17 +398,22 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
       /* This is not an SSL connect (in which case we are always done), or the
        * TCP connect() underlying the SSL failed (in which case we are also done */
 #if HAVE_PICOTCPLS
+    /*start tcpls handshake*/
     if (nse->type == NSE_TYPE_CONNECT_TCPLS && !nse->event_done) {
+        int ret = 0;
         if(iod->tcpls_use_for_handshake){
             ptls_handshake_properties_t tcpls_prop = {NULL};
-            tcpls_prop.client.mpjoin = 1;
             tcpls_prop.socket = iod->sd;
             assert(iod->tcpls->tls);
-            tcpls_handshake(iod->tcpls->tls, &tcpls_prop);
-            printf("HQHWHEHEHRHRHR\n");
+            assert(iod->tcpls->tls->ctx);
+            assert(iod->tcpls->tls->ctx->support_tcpls_options);
+            ret = tcpls_handshake(iod->tcpls->tls, &tcpls_prop);
             
         }
-        nse->event_done = 1;
+        if(ptls_handshake_is_complete(iod->tcpls->tls))
+            nse->event_done = 1;
+        else 
+            fatal("TCPLS HANSHAKE failed: %d", ret, NULL);
     }
     else
 #endif
@@ -535,7 +540,6 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
   int res;
   int err;
   struct niod *iod = nse->iod;
-
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->event_done = 1;
     nse->status = status;
@@ -549,6 +553,26 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
       res = SSL_write(iod->ssl, str, bytesleft);
     else
 #endif
+
+#if HAVE_PICOTCPLS
+    if(iod->tcpls){
+      int streamid;
+      if(iod->tcpls->streams->size == 0)
+         streamid = 0;
+      else 
+          streamid = iod->tcpls->streams->size;
+            
+      res = tcpls_send (iod->tcpls->tls, streamid, str, bytesleft);
+      if(res == 0){
+        nse->writeinfo.written_so_far += bytesleft;
+        nse->event_done = 1;
+        nse->status = NSE_STATUS_SUCCESS;
+      }
+      printf("writing for tcpls %d %d %d %d\n", res, nse->writeinfo.written_so_far, bytesleft, streamid);
+    }
+    else
+#endif
+
       res = ms->engine->io_operations->iod_write(ms, nse->iod->sd, str, bytesleft, 0, (struct sockaddr *)&nse->writeinfo.dest, (int)nse->writeinfo.destlen);
     if (res == bytesleft) {
       nse->event_done = 1;
@@ -627,7 +651,7 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
   if (nse->readinfo.read_type == NSOCK_READBYTES)
     max_chunk = nse->readinfo.num;
 
-  if (!iod->ssl) {
+  if (!iod->ssl && !iod->tcpls) {
     do {
       struct sockaddr_storage peer;
       socklen_t peerlen;
@@ -699,7 +723,7 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
         return -1;
       }
     }
-  } else {
+  } else if(iod->ssl){
 #if HAVE_OPENSSL
     /* OpenSSL read */
     while ((buflen = SSL_read(iod->ssl, buf, sizeof(buf))) > 0) {
@@ -745,16 +769,45 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
       }
     }
 #endif /* HAVE_OPENSSL */
+  } else if (iod->tcpls){
+#ifdef HAVE_PICOTCPLS
+        printf("reading for tcpls 1 %ld\n", sizeof(buf));
+        assert(iod->tcpls);
+        assert(iod->tcpls->tls);
+        assert(sizeof(buf));
+        if ((buflen = tcpls_receive(iod->tcpls->tls, buf, sizeof(buf), NULL)) > 0){
+          printf("reading for tcpls 2\n");
+          if (fs_cat(&nse->iobuf, buf, buflen) == -1) {
+            nse->event_done = 1;
+            nse->status = NSE_STATUS_ERROR;
+            nse->errnum = ENOMEM;
+            printf("reading for tcpls error 1\n");
+            return -1;
+          }
+
+          /* Sometimes a service just spews and spews data.  So we return
+           * after a somewhat large amount to avoid monopolizing resources
+           * and avoid DOS attacks. */
+          if (fs_length(&nse->iobuf) > max_chunk)
+            return fs_length(&nse->iobuf) - startlen;
+        }
+        if (buflen == -1)
+          printf("reading for tcpls error\n");
+        printf("end reading for tcpls %d\n", buflen);
+#endif 
   }
 
   if (buflen == 0) {
     nse->event_done = 1;
     nse->eof = 1;
+    printf("end reading eof %d??\n", buflen);
     if (fs_length(&nse->iobuf) > 0) {
       nse->status = NSE_STATUS_SUCCESS;
+      printf("end reading remain %d??\n", buflen);
       return fs_length(&nse->iobuf) - startlen;
     } else {
       nse->status = NSE_STATUS_EOF;
+      printf("end reading no EOF %d??\n", buflen);
       return 0;
     }
   }
@@ -769,6 +822,7 @@ void handle_read_result(struct npool *ms, struct nevent *nse, enum nse_status st
   int rc, len;
   struct niod *iod = nse->iod;
 
+  printf("start read\n");
   if (status == NSE_STATUS_TIMEOUT) {
     nse->event_done = 1;
     if (fs_length(&nse->iobuf) > 0)
