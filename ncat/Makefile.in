@@ -46,6 +46,13 @@ NSOCKDIR = ../nsock/src
 NSOCKLIB = $(NSOCKDIR)/libnsock.a
 NBASELIB = $(NBASEDIR)/libnbase.a
 
+PICOTLSCOREDIR = ../picotcpls
+PICOTLSMINICRYPTODIR = ../picotcpls
+PICOTLSOPENSSLDIR = ../picotcpls
+PICOTLSCORELIB = $(PICOTLSCOREDIR)/libpicotls-core.a
+PICOTLSMINICRYPTOLIB = $(PICOTLSMINICRYPTODIR)/libpicotls-minicrypto.a
+PICOTLSOPENSSLLIB = $(PICOTLSOPENSSLDIR)/libpicotls-openssl.a
+
 CC = @CC@
 CPPFLAGS = @CPPFLAGS@
 CFLAGS = @CFLAGS@
@@ -54,11 +61,12 @@ LIBS = @LIBS@
 DEFS = @DEFS@ -DNCAT_DATADIR="\"$(pkgdatadir)\""
 # With GCC, add extra security checks to source code.
 DEFS += -D_FORTIFY_SOURCE=2
-INCLS = -I. -I.. -I../nsock/include/ -I$(NBASEDIR)
+INCLS = -I. -I.. -I../nsock/include/ -I$(NBASEDIR) -I$(PICOTLSCOREDIR)/include
 RM = rm -f
 STRIP = @STRIP@
 OPENSSL_LIBS = @OPENSSL_LIBS@
 HAVE_OPENSSL = @HAVE_OPENSSL@
+HAVE_PICOTCPLS = @HAVE_PICOTCPLS@
 PCAP_LIBS = @PCAP_LIBS@
 NOLUA = @NOLUA@
 LIBLUADIR = @LIBLUADIR@
@@ -73,8 +81,8 @@ SHTOOL = ../shtool
 # usual directory structure into a different tree.
 DESTDIR =
 
-SRCS = ncat_main.c ncat_connect.c ncat_core.c ncat_posix.c ncat_listen.c ncat_proxy.c ncat_ssl.c base64.c http.c util.c sys_wrap.c
-OBJS = ncat_main.o ncat_connect.o ncat_core.o ncat_posix.o ncat_listen.o ncat_proxy.o ncat_ssl.o base64.o http.o util.o sys_wrap.o
+SRCS = ncat_main.c ncat_connect.c ncat_core.c ncat_posix.c ncat_listen.c ncat_proxy.c ncat_ssl.c ncat_tcpls.c base64.c http.c util.c sys_wrap.c
+OBJS = ncat_main.o ncat_connect.o ncat_core.o ncat_posix.o ncat_listen.o ncat_proxy.o ncat_ssl.o ncat_tcpls.o base64.o http.o util.o sys_wrap.o 
 DATAFILES =
 
 ifneq ($(HAVE_OPENSSL),)
@@ -117,7 +125,7 @@ build-lua: $(LIBLUADIR)/Makefile
 
 
 $(TARGET): @LUA_DEPENDS@ $(OBJS) $(NSOCKLIB)
-	$(CC) -o $@ $(CFLAGS) $(lua_cflags) $(LDFLAGS) $(OBJS) $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS)
+	$(CC) -o $@ $(CFLAGS) $(lua_cflags) $(LDFLAGS) $(OBJS) $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS) $(PICOTLSCORELIB) $(PICOTLSMINICRYPTOLIB) $(PICOTLSOPENSSLLIB)
 
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(LUA_CFLAGS) $(CFLAGS) -c $< -o $@
@@ -139,16 +147,16 @@ config.h:
 	fi
 
 test/addrset: test/addrset.o ncat_core.o sys_wrap.o util.o ncat_posix.o $(LUA_OBJS) @LUA_DEPENDS@
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS) $(PICOTLSCORELIB) $(PICOTLSMINICRYPTOLIB) $(PICOTLSOPENSSLLIB)
 
 test/test-uri: test/test-uri.o base64.o http.o ncat_core.o  sys_wrap.o util.o ncat_posix.o $(LUA_OBJS) @LUA_DEPENDS@
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS) $(PICOTLSCORELIB) $(PICOTLSMINICRYPTOLIB) $(PICOTLSOPENSSLLIB)
 
 test/test-cmdline-split: test/test-cmdline-split.o ncat_posix.o ncat_core.o sys_wrap.o util.o $(LUA_OBJS) @LUA_DEPENDS@
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS)
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS) $(PICOTLSCORELIB) $(PICOTLSMINICRYPTOLIB) $(PICOTLSOPENSSLLIB)
 
-test/test-wildcard: test/test-wildcard.o ncat_core.o ncat_ssl.o sys_wrap.o util.o ncat_posix.o $(LUA_OBJS) @LUA_DEPENDS@
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS)
+test/test-wildcard: test/test-wildcard.o ncat_core.o ncat_ssl.o ncat_tcpls.o sys_wrap.o util.o ncat_posix.o  $(LUA_OBJS) @LUA_DEPENDS@
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) $^ $(NSOCKLIB) $(NBASELIB) $(OPENSSL_LIBS) $(PCAP_LIBS) $(LUA_LIBS) $(LIBS) $(PICOTLSCORELIB) $(PICOTLSMINICRYPTOLIB) $(PICOTLSOPENSSLLIB)
 
 .PHONY: uninstall all clean distclean build-lua
 

@@ -157,6 +157,11 @@
 #include "ncat_lua.h"
 #endif
 
+#ifdef HAVE_PICOTCPLS
+#include "picotls.h"
+#include "picotls/openssl.h"
+#endif
+
 static int ncat_connect_mode(void);
 static int ncat_listen_mode(void);
 
@@ -367,6 +372,15 @@ int main(int argc, char *argv[])
         {"ssl-ciphers",     optional_argument,  NULL,         0},
         {"ssl-alpn",        optional_argument,  NULL,         0},
 #endif
+#if HAVE_PICOTCPLS
+        {"tcpls",           no_argument,        &o.tcpls,     1},
+        {"tcpls-cert",      required_argument,  NULL,         0},
+        {"tcpls-key",       required_argument,  NULL,         0},
+        {"a",               required_argument,  NULL,         'a'},
+        {"A",               required_argument,  NULL,         'A'},
+        {"b",               required_argument,  NULL,         'b'},
+        {"B",               required_argument,  NULL,         'B'},
+#endif
         {0, 0, 0, 0}
     };
 
@@ -378,10 +392,15 @@ int main(int argc, char *argv[])
     windows_init();
 #endif
 
+#ifdef HAVE_PICOTLS
+    peeraddrs = (struct sockaddr_list *)safe_zalloc(sizeof(struct sockaddr_list));
+    oursaddrs = (struct sockaddr_list *)safe_zalloc(sizeof(struct sockaddr_list));
+#endif
+
     while (1) {
         /* handle command line arguments */
         int option_index;
-        int c = getopt_long(argc, argv, "46UCc:e:g:G:i:km:hp:d:lo:x:ts:uvw:nz",
+        int c = getopt_long(argc, argv, "46UCc:e:g:G:i:km:hp:d:lo:x:ts:uvw:nzb:B:a:A:",
                             long_options, &option_index);
 
         /* That's the end of the options. */
@@ -494,7 +513,34 @@ int main(int argc, char *argv[])
         case 'z':
             o.zerobyte = 1;
             break;
+#ifdef HAVE_PICOTCPLS
+        case 'a':
+            if(tcpls_get_addrsv2(AF_INET, 0, optarg)!=0)
+		bye("You should specify ipv4 addresses followed by comma");
+            break;
+        case 'A':
+            if(tcpls_get_addrsv2(AF_INET6, 0, optarg)!=0)
+		bye("You should specify ipv6 addresses followed by comma");
+            break;
+        case 'b':
+            if(tcpls_get_addrsv2(AF_INET, 1, optarg)!=0)
+		bye("You should specify ipv4 addresses followed by comma");
+            break;
+        case 'B':
+            if(tcpls_get_addrsv2(AF_INET6, 1, optarg)!=0)
+		bye("You should specify ipv6 addresses followed by comma");
+            break;
+#endif
         case 0:
+#ifdef HAVE_PICOTCPLS
+            if (strcmp(long_options[option_index].name, "tcpls-cert") == 0) {
+                o.tcpls = 1;
+                o.tcplscert = Strdup(optarg);
+            } else if (strcmp(long_options[option_index].name, "tcpls-key") == 0) {
+                o.tcpls = 1;
+                o.tcplskey = Strdup(optarg);
+            } else 
+#endif         
             if (strcmp(long_options[option_index].name, "version") == 0) {
                 print_banner();
                 exit(EXIT_SUCCESS);
@@ -724,6 +770,11 @@ int main(int argc, char *argv[])
         bye("OpenSSL isn't compiled in. The --ssl option cannot be chosen.");
 #endif
 
+#ifndef HAVE_PICOTCPLS
+    if (o.tcpls)
+        bye("PICOTCPLS isn't compiled in. The --tcpls option cannot be chosen.");
+#endif
+
     if (o.normlog)
         o.normlogfd = ncat_openlog(o.normlog, o.append);
     if (o.hexlog)
@@ -746,6 +797,10 @@ int main(int argc, char *argv[])
         if (o.ssl)
             bye("SSL option not supported when using Unix domain sockets.");
 #endif
+#ifdef HAVE_PICOTCPLS
+        if (o.tcpls)
+            bye("TCPLS option not supported when using Unix domain sockets.");
+#endif
         if (o.broker)
             bye("Connection brokering not supported when using Unix domain sockets.");
         if (srcport != -1)
@@ -762,6 +817,10 @@ int main(int argc, char *argv[])
 #ifdef HAVE_OPENSSL
         if (o.ssl)
             bye("SSL option not supported when using vsock sockets.");
+#endif
+#ifdef HAVE_PICOTCPLS
+        if (o.tcpls)
+            bye("TCPLS option not supported when using vsock sockets.");
 #endif
         if (o.broker)
             bye("Connection brokering not supported when using vsock sockets.");
@@ -839,6 +898,7 @@ int main(int argc, char *argv[])
     else
         o.portno = DEFAULT_NCAT_PORT;
 
+   
     /* Resolve the given source address */
     if (source) {
         int rc = 0;
@@ -970,9 +1030,10 @@ int main(int argc, char *argv[])
     else {
         struct sockaddr_list *targetaddrs_item = targetaddrs;
         while (targetaddrs_item != NULL)
-        {
+        {   
             if (targetaddrs_item->addr.storage.ss_family == AF_INET)
                 targetaddrs_item->addr.in.sin_port = htons(o.portno);
+                
 #ifdef HAVE_IPV6
             else if (targetaddrs_item->addr.storage.ss_family == AF_INET6)
                 targetaddrs_item->addr.in6.sin6_port = htons(o.portno);
@@ -1045,6 +1106,13 @@ connection brokering should work.");
 #ifdef HAVE_LUA
     if (o.execmode == EXEC_LUA)
         lua_setup();
+#endif
+
+#if HAVE_OPENSSL
+#if HAVE_PICOTCPLS
+    if(o.ssl && o.tcpls)
+        bye("OpenSSL (--ssl) and TCPLS (--tcpls) can not been specify together"); 
+#endif
 #endif
 
     if (o.listen)

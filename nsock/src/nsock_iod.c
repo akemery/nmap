@@ -154,6 +154,10 @@ nsock_iod nsock_iod_new2(nsock_pool nsockp, int sd, void *userdata) {
   gh_list_append(&nsp->active_iods, &nsi->nodeq);
 
   nsock_log_info("nsock_iod_new (IOD #%lu)", nsi->id);
+  
+#if HAVE_PICOTCPLS
+  nsi->tcpls_use_for_handshake = 0;
+#endif
 
   return (nsock_iod)nsi;
 }
@@ -299,6 +303,12 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
 
   if (nsi->px_ctx)
     proxy_chain_context_delete(nsi->px_ctx);
+    
+#ifdef HAVE_PICOTCPLS
+  if(nsi->tcpls){
+     tcpls_free(tcpls);
+  }
+#endif
 }
 
 /* Returns the ID of an nsock_iod . This ID is always unique amongst ids for a

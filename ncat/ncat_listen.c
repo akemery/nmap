@@ -176,11 +176,16 @@ static fd_set master_readfds, master_writefds, master_broadcastfds;
 static fd_set sslpending_fds;
 #endif
 
+#ifdef HAVE_PICOTCPLS
+static fd_set tcplspending_fds;
+#endif
+
 /* These are bookkeeping data structures that are parallel to read_fds and
    broadcast_fds. */
 static fd_list_t client_fdlist, broadcast_fdlist;
 
 static int listen_socket[NUM_LISTEN_ADDRS];
+
 /* Has stdin seen EOF? */
 static int stdin_eof = 0;
 static int crlf_state = 0;
@@ -240,15 +245,19 @@ static int ncat_listen_stream(int proto)
     struct timeval tv;
     struct timeval *tvp = NULL;
     unsigned int num_sockets;
-
     /* clear out structs */
     FD_ZERO(&master_readfds);
     FD_ZERO(&master_writefds);
     FD_ZERO(&master_broadcastfds);
-    FD_ZERO(&listen_fds);
+    FD_ZERO(&listen_fds); 
 #ifdef HAVE_OPENSSL
     FD_ZERO(&sslpending_fds);
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    FD_ZERO(&tcplspending_fds);
+#endif
+
     zmem(&client_fdlist, sizeof(client_fdlist));
     zmem(&broadcast_fdlist, sizeof(broadcast_fdlist));
 
@@ -271,6 +280,11 @@ static int ncat_listen_stream(int proto)
     }
 #endif
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls)
+       set_tcpls_ctx_options(1);
+#endif
+
 /* Not sure if this problem exists on Windows, but fcntl and /dev/null don't */
 #ifndef WIN32
     /* Check whether stdin is closed. Because we treat this fd specially, we
@@ -287,11 +301,19 @@ static int ncat_listen_stream(int proto)
     }
 #endif
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+        do_init_tcpls(1);
+        do_tcpls_bind(&client_fdlist, &master_readfds, &listen_fds);
+    } else{
+#endif
+
+
+
     /* We need a list of fds to keep current fdmax. The second parameter is a
        number added to the supplied connection limit, that will compensate
        maxfds for the added by default listen and stdin sockets. */
     init_fdlist(&client_fdlist, sadd(o.conn_limit, num_listenaddrs + 1));
-
     for (i = 0; i < NUM_LISTEN_ADDRS; i++)
         listen_socket[i] = -1;
 
@@ -316,15 +338,18 @@ static int ncat_listen_stream(int proto)
         add_fd(&client_fdlist, listen_socket[num_sockets]);
 
         FD_SET(listen_socket[num_sockets], &listen_fds);
-
         num_sockets++;
     }
+
     if (num_sockets == 0) {
         if (num_listenaddrs == 1)
             bye("Unable to open listening socket on %s: %s", inet_ntop_ez(&listenaddrs[0].storage, sizeof(listenaddrs[0].storage)), socket_strerror(socket_errno()));
         else
             bye("Unable to open any listening sockets.");
     }
+#ifdef HAVE_PICOTCPLS
+    }
+#endif
 
     add_fd(&client_fdlist, STDIN_FILENO);
 
@@ -332,13 +357,12 @@ static int ncat_listen_stream(int proto)
 
     if (o.idletimeout > 0)
         tvp = &tv;
-
     while (1) {
         /* We pass these temporary descriptor sets to fselect, since fselect
            modifies the sets it receives. */
         fd_set readfds = master_readfds, writefds = master_writefds;
-
-
+        
+        
         if (o.debug > 1)
             logdebug("selecting, fdmax %d\n", client_fdlist.fdmax);
 
@@ -359,10 +383,13 @@ static int ncat_listen_stream(int proto)
 
         if (fds_ready == 0)
             bye("Idle timeout expired (%d ms).", o.idletimeout);
+        
+        
 
         for (i = 0; i < client_fdlist.nfds && fds_ready > 0; i++) {
             struct fdinfo *fdi = &client_fdlist.fds[i];
             int cfd = fdi->fd;
+           
             /* Loop through descriptors until there's something to read */
             if (!FD_ISSET(cfd, &readfds) && !FD_ISSET(cfd, &writefds))
                 continue;
@@ -404,6 +431,31 @@ static int ncat_listen_stream(int proto)
                         return 1;
                     --conn_inc;
                     break;
+                }
+            } else
+#endif
+
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls && FD_ISSET(cfd, &tcplspending_fds)){
+                FD_CLR(cfd, &master_readfds);
+                FD_CLR(cfd, &master_writefds);
+                switch(do_tcpls_handshake(fdi)){
+                    case NCAT_TCPLS_HANDSHAKE_COMPLETED:
+                        post_handle_connection(*fdi);
+                        FD_CLR(cfd, &tcplspending_fds);
+                        break;
+                    case NCAT_TCPLS_PENDING_WRITE:
+                        FD_SET(cfd, &master_writefds);
+                        break;
+                    case NCAT_TCPLS_PENDING_READ:
+                        FD_SET(cfd, &master_readfds);
+                        break;    
+                    default :
+                        Close(fdi->fd);
+                        FD_CLR(cfd, &sslpending_fds);
+                        FD_CLR(cfd, &master_readfds);
+                        rm_fd(&client_fdlist, cfd);
+                        break;
                 }
             } else
 #endif
@@ -461,8 +513,15 @@ static void handle_connection(int socket_accept)
     ss_len = sizeof(remoteaddr.storage);
 
     errno = 0;
+#ifdef HAVE_PICOTCPLS
+     if(o.tcpls){
+        s.fd = do_tcpls_accept(socket_accept, &remoteaddr.sockaddr, &ss_len);
+     }
+     else
+#endif
     s.fd = accept(socket_accept, &remoteaddr.sockaddr, &ss_len);
-
+    
+    
     if (s.fd < 0) {
         if (o.debug)
             logdebug("Error in accept: %s\n", strerror(errno));
@@ -491,11 +550,20 @@ static void handle_connection(int socket_accept)
     if (!o.keepopen && !o.broker) {
         int i;
         for (i = 0; i < num_listenaddrs; i++) {
-            Close(listen_socket[i]);
-            FD_CLR(listen_socket[i], &master_readfds);
-            rm_fd(&client_fdlist, listen_socket[i]);
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls){
+                
+            } else{
+#endif
+                Close(listen_socket[i]);
+                FD_CLR(listen_socket[i], &master_readfds);
+                rm_fd(&client_fdlist, listen_socket[i]);
+#ifdef HAVE_PICOTCPLS
+            }
+#endif
         }
     }
+    
 
     if (o.verbose) {
 #if HAVE_SYS_UN_H
@@ -544,6 +612,17 @@ static void handle_connection(int socket_accept)
             bye("add_fdinfo() failed.");
     } else
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+        FD_SET(s.fd, &tcplspending_fds);
+        FD_SET(s.fd, &master_readfds);
+        FD_SET(s.fd, &master_writefds);
+        /* Add it to our list of fds too for maintaining maxfd. */
+        if (add_fdinfo(&client_fdlist, &s) < 0)
+            bye("add_fdinfo() failed.");
+    } else
+#endif
         post_handle_connection(s);
 }
 
@@ -572,17 +651,25 @@ static void post_handle_connection(struct fdinfo sinfo)
         /* Now that a client is connected, pay attention to stdin. */
         if (!stdin_eof)
             FD_SET(STDIN_FILENO, &master_readfds);
-        if (!o.sendonly) {
+        if (!o.sendonly) { 
             /* add to our lists */
             FD_SET(sinfo.fd, &master_readfds);
             /* add it to our list of fds for maintaining maxfd */
-#ifdef HAVE_OPENSSL
+#if defined HAVE_OPENSSL && defined HAVE_PICOTCPLS
             /* Don't add it twice (see handle_connection above) */
+            if (!o.ssl && !o.tcpls) {
+#else 
+#ifdef HAVE_OPENSSL
             if (!o.ssl) {
+#else 
+#ifdef HAVE_PICOTCPLS
+            if (!o.tcpls){
+#endif
+#endif
 #endif
             if (add_fdinfo(&client_fdlist, &sinfo) < 0)
                 bye("add_fdinfo() failed.");
-#ifdef HAVE_OPENSSL
+#if defined HAVE_OPENSSL || defined HAVE_PICOTCPLS
             }
 #endif
         }
@@ -647,7 +734,6 @@ int read_socket(int recv_fd)
 
     fdn = get_fdinfo(&client_fdlist, recv_fd);
     ncat_assert(fdn != NULL);
-
     nbytes = 0;
     do {
         int n;
@@ -661,6 +747,12 @@ int read_socket(int recv_fd)
                 if (nbytes == 0)
                     SSL_shutdown(fdn->ssl);
                 SSL_free(fdn->ssl);
+            }
+#endif
+
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls){
+
             }
 #endif
             close(recv_fd);
@@ -1076,7 +1168,6 @@ static void read_and_broadcast(int recv_fd)
         } else {
             /* From a connected socket, not stdin. */
             n = ncat_recv(fdn, buf, sizeof(buf), &pending);
-
             if (n <= 0) {
                 if (o.debug)
                     logdebug("Closing connection.\n");

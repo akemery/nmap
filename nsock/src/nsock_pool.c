@@ -181,6 +181,10 @@ nsock_pool nsock_pool_new(void *userdata) {
   nsp->sslctx = NULL;
 #endif
 
+#if HAVE_PICOTCPLS
+  nsp->ptlsctx = NULL;
+#endif
+
   nsp->px_chain = NULL;
 
   return (nsock_pool)nsp;
@@ -290,6 +294,12 @@ void nsock_pool_delete(nsock_pool ms_pool) {
     SSL_CTX_free(nsp->sslctx);
 #endif
 
+#if HAVE_PICOTCPLS
+  if(nsp->ptlsctx!=NULL){
+    ptls_ctx_free(nsp->ptlsctx);
+  }
+  
+#endif
   free(nsp);
 }
 

@@ -1041,13 +1041,24 @@ int ncat_connect(void)
     nsock_pool_set_broadcast(mypool, 1);
 
 #ifdef HAVE_OPENSSL
+    if(o.ssl){
 #ifdef HAVE_DTLS_CLIENT_METHOD
-    if(o.proto == IPPROTO_UDP)
-        set_ssl_ctx_options((SSL_CTX *) nsock_pool_dtls_init(mypool, 0));
-    else
+        if(o.proto == IPPROTO_UDP)
+            set_ssl_ctx_options((SSL_CTX *) nsock_pool_dtls_init(mypool, 0));
+        else
 #endif
-        set_ssl_ctx_options((SSL_CTX *) nsock_pool_ssl_init(mypool, 0));
+            set_ssl_ctx_options((SSL_CTX *) nsock_pool_ssl_init(mypool, 0));
+    }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+        set_tcpls_ctx_options(0);
+        do_init_tcpls(0);
+        do_tcpls_add_addrs(0,NULL);
+    }
+#endif
+
 
     if (!o.proxytype) {
 #if HAVE_SYS_UN_H
@@ -1097,8 +1108,14 @@ int ncat_connect(void)
         } else
 #endif
         {
+#ifdef HAVE_PICOTCPLS
+            if(o.tcpls){
+               do_tcpls_connect(mypool, cs.sock_nsi, connect_handler); 
+            } else 
+#endif
             /* Add connection to first resolved address. */
             try_nsock_connect(mypool, targetaddrs);
+
         }
     } else {
         /* A proxy connection. */
@@ -1134,11 +1151,12 @@ int ncat_connect(void)
         post_connect(mypool, cs.sock_nsi);
     }
 
+    
     /* connect */
     rc = nsock_loop(mypool, -1);
-
+    
+    
     free_sockaddr_list(targetaddrs);
-
     if (o.verbose) {
         struct timeval end_time;
         double time;
@@ -1156,14 +1174,13 @@ int ncat_connect(void)
         unlink(srcaddr.un.sun_path);
     }
 #endif
-
     nsock_pool_delete(mypool);
-
     return rc == NSOCK_LOOP_ERROR ? 1 : 0;
 }
 
 static void try_nsock_connect(nsock_pool nsp, struct sockaddr_list *conn_addr)
 {
+
 #ifdef HAVE_OPENSSL
     if (o.ssl) {
         nsock_connect_ssl(nsp, cs.sock_nsi, connect_handler,
@@ -1221,7 +1238,7 @@ static void connect_handler(nsock_pool nsp, nsock_event evt, void *data)
     enum nse_type type = nse_type(evt);
     struct sockaddr_list *next_addr = (struct sockaddr_list *)data;
 
-    ncat_assert(type == NSE_TYPE_CONNECT || type == NSE_TYPE_CONNECT_SSL);
+    ncat_assert(type == NSE_TYPE_CONNECT || type == NSE_TYPE_CONNECT_SSL || type == NSE_TYPE_CONNECT_TCPLS);
 
     if (status == NSE_STATUS_ERROR || status == NSE_STATUS_TIMEOUT) {
         /* If there are more resolved addresses, try connecting to next one */
@@ -1300,9 +1317,14 @@ static void post_connect(nsock_pool nsp, nsock_iod iod)
 
     /* Start the initial reads. */
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls){
+        if (!o.sendonly && !o.zerobyte)
+            nsock_read(nsp, iod, read_socket_handler, -1, NULL);
+    } else
+#endif
     if (!o.sendonly && !o.zerobyte)
         nsock_read(nsp, cs.sock_nsi, read_socket_handler, -1, NULL);
-
     if (!o.recvonly && !o.zerobyte)
         nsock_readbytes(nsp, cs.stdin_nsi, read_stdin_handler, -1, NULL, 0);
 
@@ -1357,7 +1379,7 @@ static void read_stdin_handler(nsock_pool nsp, nsock_event evt, void *data)
         if (fix_line_endings(buf, &nbytes, &tmp, &cs.crlf_state))
             buf = tmp;
     }
-
+    
     nsock_write(nsp, cs.sock_nsi, write_socket_handler, -1, NULL, buf, nbytes);
     ncat_log_send(buf, nbytes);
 
@@ -1373,7 +1395,7 @@ static void read_socket_handler(nsock_pool nsp, nsock_event evt, void *data)
     enum nse_type type = nse_type(evt);
     char *buf;
     int nbytes;
-
+    
     ncat_assert(type == NSE_TYPE_READ);
 
     if (status == NSE_STATUS_EOF) {

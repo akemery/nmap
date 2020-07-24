@@ -510,6 +510,31 @@ nsock_event_id nsock_connect_ssl(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handl
 #endif /* HAVE_OPENSSL */
 }
 
+
+nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
+                                 void *userdata) {
+
+#ifndef HAVE_PICOTCPLS
+  fatal("nsock_connect_tcpls called - but nsock was built w/o PICOTCPLS support.  QUITTING");
+  return (nsock_event_id)0; /* UNREACHED */
+#else
+  struct niod *nsi = (struct niod *)nsiod;
+  struct npool *ms = (struct npool *)nsp;
+  struct nevent *nse;
+
+  /*if (!ms->ptlsctx)
+    nsock_pool_tcpls_init(ms, 0);*/
+  assert(nsi->state == NSIOD_STATE_INITIAL || nsi->state == NSIOD_STATE_UNKNOWN);
+  nse = event_new(ms, NSE_TYPE_CONNECT_TCPLS, nsi, timeout_msecs, handler, userdata);
+  assert(nse);
+  
+  nsock_pool_add_event(ms, nse);
+
+  return nse->id;
+#endif /* HAVE_PICOTCPLS */
+}
+
+
 /* Request ssl connection over already established connection.  nsiod must be
  * socket that is already connected to target using nsock_connect_tcp or
  * nsock_connect_sctp.  All parameters have the same meaning as in

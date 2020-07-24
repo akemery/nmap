@@ -234,10 +234,10 @@ static void update_events(struct niod * iod, struct npool *ms, struct nevent *ns
  */
 static int iod_add_event(struct niod *iod, struct nevent *nse) {
   struct npool *nsp = iod->nsp;
-
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       if (iod->first_connect)
         gh_list_insert_before(&nsp->connect_events,
                               iod->first_connect, &nse->nodeq_io);
@@ -344,6 +344,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
 #else
   int sslconnect_inprogress = 0;
 #endif
+   
 
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->status = status;
@@ -362,7 +363,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
         nse->status = NSE_STATUS_ERROR;
         nse->errnum = optval;
     }
-
+    
     /* Now special code for the SSL case where the TCP connection was successful. */
     if (nse->type == NSE_TYPE_CONNECT_SSL &&
         nse->status == NSE_STATUS_SUCCESS) {
@@ -396,6 +397,27 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
     } else {
       /* This is not an SSL connect (in which case we are always done), or the
        * TCP connect() underlying the SSL failed (in which case we are also done */
+#if HAVE_PICOTCPLS
+    /*start tcpls handshake*/
+    if (nse->type == NSE_TYPE_CONNECT_TCPLS && !nse->event_done) {
+        int ret = 0;
+        if(iod->tcpls_use_for_handshake){
+            static size_t max_early_data_size;
+            ptls_handshake_properties_t tcpls_prop = {NULL};
+            tcpls_prop.socket = iod->sd;
+            tcpls_prop.client.max_early_data_size = &max_early_data_size;
+            assert(iod->tcpls->tls);
+            assert(iod->tcpls->tls->ctx);
+            assert(iod->tcpls->tls->ctx->support_tcpls_options);
+            ret = tcpls_handshake(iod->tcpls->tls, &tcpls_prop); 
+        }
+        if(ptls_handshake_is_complete(iod->tcpls->tls))
+            nse->event_done = 1;
+        else 
+            fatal("TCPLS HANSHAKE failed: %d", ret, NULL);
+    }
+    else
+#endif
       nse->event_done = 1;
     }
   } else {
@@ -502,6 +524,7 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
     }
   }
 #endif
+
 }
 
 static int errcode_is_failure(int err) {
@@ -518,7 +541,6 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
   int res;
   int err;
   struct niod *iod = nse->iod;
-
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->event_done = 1;
     nse->status = status;
@@ -532,6 +554,26 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
       res = SSL_write(iod->ssl, str, bytesleft);
     else
 #endif
+
+#if HAVE_PICOTCPLS
+    if(iod->tcpls){
+      int streamid;
+      if(iod->tcpls->streams->size == 0)
+         streamid = 0;
+      else 
+          streamid = iod->tcpls->streams->size;
+      assert(ptls_handshake_is_complete(iod->tcpls->tls));    
+      res = tcpls_send (iod->tcpls->tls, streamid, str, bytesleft);
+      if(res == 0){
+        nse->writeinfo.written_so_far += bytesleft;
+        nse->event_done = 1;
+        nse->status = NSE_STATUS_SUCCESS;
+      } else
+        printf("Error writing for tcpls %d %d %d %d\n", res, nse->writeinfo.written_so_far, bytesleft, streamid);
+    }
+    else
+#endif
+
       res = ms->engine->io_operations->iod_write(ms, nse->iod->sd, str, bytesleft, 0, (struct sockaddr *)&nse->writeinfo.dest, (int)nse->writeinfo.destlen);
     if (res == bytesleft) {
       nse->event_done = 1;
@@ -610,7 +652,7 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
   if (nse->readinfo.read_type == NSOCK_READBYTES)
     max_chunk = nse->readinfo.num;
 
-  if (!iod->ssl) {
+  if (!iod->ssl && !iod->tcpls) {
     do {
       struct sockaddr_storage peer;
       socklen_t peerlen;
@@ -682,7 +724,7 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
         return -1;
       }
     }
-  } else {
+  } else if(iod->ssl){
 #if HAVE_OPENSSL
     /* OpenSSL read */
     while ((buflen = SSL_read(iod->ssl, buf, sizeof(buf))) > 0) {
@@ -728,6 +770,28 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
       }
     }
 #endif /* HAVE_OPENSSL */
+  } else if (iod->tcpls){
+#ifdef HAVE_PICOTCPLS
+        assert(iod->tcpls);
+        assert(iod->tcpls->tls);
+        assert(ptls_handshake_is_complete(iod->tcpls->tls));
+        if ((buflen = tcpls_receive(iod->tcpls->tls, buf, sizeof(buf), NULL)) > 0){
+          if (fs_cat(&nse->iobuf, buf, buflen) == -1) {
+            nse->event_done = 1;
+            nse->status = NSE_STATUS_ERROR;
+            nse->errnum = ENOMEM;
+            return -1;
+          }
+
+          /* Sometimes a service just spews and spews data.  So we return
+           * after a somewhat large amount to avoid monopolizing resources
+           * and avoid DOS attacks. */
+          if (fs_length(&nse->iobuf) > max_chunk)
+            return fs_length(&nse->iobuf) - startlen;
+        }
+        if (buflen == -1)
+          printf("reading for tcpls error\n");
+#endif 
   }
 
   if (buflen == 0) {
@@ -961,11 +1025,11 @@ void process_event(struct npool *nsp, gh_list_t *evlist, struct nevent *nse, int
                       nse->id,
                       (long)TIMEVAL_MSEC_SUBTRACT(nse->timeout, nsock_tod),
                       nse->event_done);
-
   if (!nse->event_done) {
     switch (nse->type) {
       case NSE_TYPE_CONNECT:
       case NSE_TYPE_CONNECT_SSL:
+      case NSE_TYPE_CONNECT_TCPLS:
         if (ev != EV_NONE)
           handle_connect_result(nsp, nse, NSE_STATUS_SUCCESS);
         if (event_timedout(nse))
@@ -1252,11 +1316,11 @@ void nsock_pool_add_event(struct npool *nsp, struct nevent *nse) {
     /* This event is expirable, add it to the queue */
     gh_heap_push(&nsp->expirables, &nse->expire);
   }
-
   /* Now we do the event type specific actions */
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       if (!nse->event_done) {
         assert(nse->iod->sd >= 0);
         socket_count_read_inc(nse->iod);

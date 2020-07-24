@@ -102,6 +102,15 @@ extern "C" {
  * can always initiate another read request to ask for more. */
 #define NSOCK_READ_CHUNK_SIZE 0x8FFFF
 
+#if HAVE_PICOTCPLS
+#include <openssl/pem.h>
+#include <openssl/engine.h>
+
+#include "picotls.h"
+#include "picotls/openssl.h"
+#include "containers.h"
+#endif
+
 struct npool;
 struct niod;
 struct nevent;
@@ -251,6 +260,8 @@ void nsock_pool_set_device(nsock_pool nsp, const char *device);
  *  validation. */
 #define NSOCK_SSL_MAX_SPEED (1 << 0)
 nsock_ssl_ctx nsock_pool_ssl_init(nsock_pool ms_pool, int flags);
+nsock_ssl_ctx nsock_pool_tcpls_init(nsock_pool ms_pool, int flags);
+void ptls_ctx_free(ptls_context_t *ptls_ctx);
 
 /* Initializes an Nsock pool to create a DTLS connect. This sets and internal
  * SSL_CTX, which is like a template that sets options for all connections that
@@ -323,7 +334,8 @@ enum nse_type {
   NSE_TYPE_WRITE = 3,
   NSE_TYPE_TIMER = 4,
   NSE_TYPE_PCAP_READ = 5,
-  NSE_TYPE_MAX = 6,
+  NSE_TYPE_CONNECT_TCPLS = 6,
+  NSE_TYPE_MAX = 7,
 };  /* At some point I was considering a NSE_TYPE_START and NSE_TYPE_CUSTOM */
 
 /* Find the type of an event that spawned a callback */
@@ -612,6 +624,10 @@ nsock_event_id nsock_connect_udp(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handl
  * structure you are passing in. */
 nsock_event_id nsock_connect_ssl(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
                                  void *userdata, struct sockaddr *ss, size_t sslen, int proto, unsigned short port, nsock_ssl_session ssl_session);
+
+nsock_event_id nsock_connect_tcpls(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler, int timeout_msecs,
+                                 void *userdata);
+void nsock_iod_tcpls_new(nsock_iod nsi, int sd, tcpls_t *tcpls);
 
 /* Request ssl connection over already established TCP/SCTP connection.  nsiod
  * must be socket that is already connected to target using nsock_connect_tcp or

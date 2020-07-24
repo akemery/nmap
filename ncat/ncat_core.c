@@ -219,6 +219,12 @@ void options_init(void)
     o.sslciphers = NULL;
     o.sslalpn = NULL;
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    o.tcpls = 0;
+    o.tcplscert = NULL;
+    o.tcplskey = NULL;
+#endif
 }
 
 /* Internal helper for resolve and resolve_numeric. addl_flags is ored into
@@ -359,6 +365,12 @@ int fdinfo_close(struct fdinfo *fdn)
     }
 #endif
 
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls && fdn->tcpls != NULL){
+        tcpls_free(fdn->tcpls);
+    }
+#endif
+
     return close(fdn->fd);
 }
 
@@ -383,6 +395,17 @@ int fdinfo_recv(struct fdinfo *fdn, char *buf, size_t size)
         return n;
     }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+   if(o.tcpls && fdn->tcpls != NULL){
+        assert(ptls_handshake_is_complete(fdn->tcpls->tls));
+        n = tcpls_receive(fdn->tcpls->tls, buf, size, NULL);
+        if(n<0)
+            logdebug("TCPLS_recv error on %d:\n", fdn->fd);
+        return n;
+    }
+#endif
+
     return recv(fdn->fd, buf, size, 0);
 }
 
@@ -391,6 +414,12 @@ int fdinfo_pending(struct fdinfo *fdn)
 #ifdef HAVE_OPENSSL
     if (o.ssl && fdn->ssl)
         return SSL_pending(fdn->ssl);
+#endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls && fdn->tcpls){
+       
+    }
 #endif
     return 0;
 }
@@ -426,7 +455,6 @@ int ncat_recv(struct fdinfo *fdn, char *buf, size_t size, int *pending)
        work for us. Indicate to the caller that this function must be called
        again to get more data. */
     *pending = fdinfo_pending(fdn);
-
     return n;
 }
 
@@ -451,6 +479,23 @@ int fdinfo_send(struct fdinfo *fdn, const char *buf, size_t size)
         return n;
     }
 #endif
+
+#ifdef HAVE_PICOTCPLS
+    if(o.tcpls && fdn->tcpls != NULL){
+        int streamid;
+        if(fdn->tcpls->streams->size == 0)
+            streamid = 0;
+        else 
+            streamid = fdn->tcpls->streams->size;
+        assert(ptls_handshake_is_complete(fdn->tcpls->tls));
+        n = tcpls_send(fdn->tcpls->tls, streamid, buf, size);
+        if(n<0)
+            logdebug("TCPLS_send error on %d:\n", fdn->fd);
+        
+        return n;
+    }
+#endif
+
     return send(fdn->fd, buf, size, 0);
 }
 
@@ -495,6 +540,8 @@ int ncat_broadcast(fd_set *fds, const fd_list_t *fdlist, const char *msg, size_t
 
     if (o.recvonly)
         return size;
+        
+    printf("broadcast\n");
 
     ret = 0;
     for (i = 0; i <= fdlist->fdmax; i++) {

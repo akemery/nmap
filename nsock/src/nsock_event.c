@@ -148,6 +148,7 @@ void update_first_events(struct nevent *nse) {
   switch (get_event_id_type(nse->id)) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       first_ev_next(nse, &nse->iod->first_connect, 0);
       break;
 
@@ -427,11 +428,12 @@ struct nevent *event_new(struct npool *nsp, enum nse_type type,
 
   /* First we check if one is available from the free list ... */
   lnode = gh_list_pop(&nsp->free_events);
+  
   if (!lnode)
     nse = (struct nevent *)safe_malloc(sizeof(*nse));
   else
     nse = lnode_nevent(lnode);
-
+    
   memset(nse, 0, sizeof(*nse));
 
   nse->id = get_new_event_id(nsp, type);
@@ -444,7 +446,6 @@ struct nevent *event_new(struct npool *nsp, enum nse_type type,
 
   if (type == NSE_TYPE_READ || type ==  NSE_TYPE_WRITE)
     filespace_init(&(nse->iobuf), 1024);
-
 #if HAVE_PCAP
   if (type == NSE_TYPE_PCAP_READ) {
     mspcap *mp;

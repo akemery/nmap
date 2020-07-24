@@ -1,0 +1,315 @@
+#include <string.h>
+#include <stdio.h>
+#include <openssl/pem.h>
+#include <openssl/engine.h>
+
+
+#include "nbase.h"
+#include "ncat_config.h"
+
+#include "nsock.h"
+#include "ncat.h"
+
+#include "picotls.h"
+#include "picotls/openssl.h"
+#include "containers.h"
+
+
+static ptls_context_t *ctx;
+static tcpls_t *tcpls;
+static list_t *tcpls_con_l;
+
+static int load_private_key(ptls_context_t *ctx, const char *fn){
+    static ptls_openssl_sign_certificate_t sc;
+    FILE *fp;
+    EVP_PKEY *pkey;
+    if ((fp = fopen(fn, "rb")) == NULL) {
+        fprintf(stderr, "failed to open file:%s:%s\n", fn, strerror(errno));
+        return(-1);
+    }
+    pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+    fclose(fp);
+    if (pkey == NULL) {
+        fprintf(stderr, "failed to read private key from file:%s\n", fn);
+        return(-1);
+    }
+    ptls_openssl_init_sign_certificate(&sc, pkey);
+    EVP_PKEY_free(pkey);
+    ctx->sign_certificate = &sc.super;
+    return(0);
+}
+
+static void init_tcpls_options(void){
+    tcpls_o->timeoutval = -1;
+    tcpls_o->second = -1;
+    tcpls_o->nb_peers = 0;
+    tcpls_o->nb_ours = 0;
+    return;
+};
+
+
+int tcpls_get_addrsv2(int af, unsigned int ours, char *optarg){
+    char *s;
+    if(tcpls_o==NULL){
+        tcpls_o = (struct tcpls_options*)safe_zalloc(sizeof(tcpls_o));
+        init_tcpls_options();
+        peers_list = new_list(15,15);
+        ours_list = new_list(15,15);
+        peers6_list = new_list(40,15);
+        ours6_list = new_list(40,15);
+        nb_ours = 0; nb_peers = 0; nb_ours6 = 0; nb_peers6 = 0;
+    }
+    s = strtok(optarg, ",");
+    while(s!=NULL){
+        if(ours){
+            if(af == AF_INET){
+                list_add(ours_list, s);
+                nb_ours++;
+            }    
+            else{
+                list_add(ours6_list, s);
+                nb_ours6++;
+            }
+        }
+        else{
+            if(af == AF_INET){
+                list_add(peers_list, s);
+                nb_peers++;
+               
+            }
+            else{
+                list_add(peers6_list, s);
+                nb_peers6++;
+            }
+        }         
+        s = strtok(NULL, ",");            
+    }
+    return 0;
+}
+
+static int tcpls_resolve_addrs(int is_server){
+    union sockaddr_u addr;
+    size_t sslen;
+    int ret, i;
+    int port;
+    for(i = 0; i < nb_peers; i++){
+        char *s = list_get(peers_list, i);
+        ret = resolve(s, o.portno, &addr.storage, &sslen, AF_INET);
+        if(ret!=0) return -1;
+        peer_addrs[tcpls_o->nb_peers++] = addr;
+    }
+    
+    for(i = 0; i < nb_peers6; i++){
+        char *s = list_get(peers6_list, i);
+        ret = resolve(s, o.portno, &addr.storage, &sslen, AF_INET6);
+        if(ret!=0) return -1;
+        peer_addrs[tcpls_o->nb_peers++] = addr;
+    }
+    for(i = 0; i < nb_ours; i++){
+        char *s = list_get(ours_list, i);
+        port = is_server ? o.portno : -1*(i+1) ;
+        ret = resolve(s, port, &addr.storage, &sslen, AF_INET);
+        if(ret!=0) return -1;
+        ours_addrs[tcpls_o->nb_ours++] = addr;
+    }
+    
+    for(i = 0; i < nb_ours6; i++){
+        char *s = list_get(ours6_list, i);
+        port = is_server ? o.portno : -1*(i+1) ;
+        ret = resolve(s, port, &addr.storage, &sslen, AF_INET6);
+        if(ret!=0) return -1;
+        ours_addrs[tcpls_o->nb_ours++] = addr;
+    }
+    return 0;
+}
+
+int do_init_tcpls(int is_server){
+    tcpls = (tcpls_t *)tcpls_new(ctx,  is_server);
+    tcpls_con_l = new_list(sizeof(struct tcpls_con),tcpls_o->nb_ours);
+    if(tcpls_resolve_addrs(is_server)!=0)
+       return(-1);
+    return 0;
+}
+
+static int tcpls_add_addrs(unsigned int is_server, tcpls_t * tcpls){
+    int i;
+    int settopeer = tcpls->tls->is_server;
+    for(i = 0; i < tcpls_o->nb_peers; i++){
+        if(peer_addrs[i].storage.ss_family == AF_INET)
+            tcpls_add_v4(tcpls->tls, (struct sockaddr_in*)&peer_addrs[i], 0, 0, 0);
+        if(peer_addrs[i].storage.ss_family == AF_INET6)
+            tcpls_add_v6(tcpls->tls, (struct sockaddr_in6*)&peer_addrs[i], 0, 0, 0);
+    }
+    for(i = 0; i < tcpls_o->nb_ours; i++){
+        if(ours_addrs[i].storage.ss_family == AF_INET)
+            tcpls_add_v4(tcpls->tls, (struct sockaddr_in*)&ours_addrs[i], 0, settopeer, 1);
+        if(ours_addrs[i].storage.ss_family == AF_INET6)
+            tcpls_add_v6(tcpls->tls, (struct sockaddr_in6*)&ours_addrs[i], 0, settopeer, 1);
+    }
+    return 0;
+}
+
+int do_tcpls_add_addrs(unsigned int is_server, tcpls_t * ctcpls){
+    if(ctcpls == NULL)
+        return tcpls_add_addrs(is_server, tcpls);
+    else
+        return tcpls_add_addrs(is_server, ctcpls);
+}
+
+
+static nsock_iod tcpls_new_iod(nsock_pool nsp, int sd, struct sockaddr_storage *v4, size_t ssv4,
+                              struct sockaddr_storage *v6, size_t ssv6 ){
+    nsock_iod nsi = nsock_iod_new2(nsp, sd, NULL);
+    if(nsi == NULL)
+        return NULL;
+    if(v4 != NULL)
+        nsock_iod_set_localaddr(nsi, v4, ssv4);
+    if(v6 != NULL)
+        nsock_iod_set_localaddr(nsi, v6, ssv6);
+    return nsi;
+}
+
+int do_tcpls_connect(nsock_pool nsp, nsock_iod nsiod, nsock_ev_handler handler){
+    struct timeval timeout;
+    ctx->output_decrypted_tcpls_data = 0;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    connect_info_t *con;
+    nsock_iod nsi;
+    int i, err = tcpls_connect(tcpls->tls, NULL, NULL, &timeout);
+    if (err){
+        fprintf(stderr, "tcpls_connect failed with err %d", err);
+        return 1;
+    }
+    for(i = 0; i < tcpls->connect_infos->size; i++){
+        con = list_get(tcpls->connect_infos, i);
+        struct sockaddr_storage *src = (con->src == NULL) ? NULL : (struct sockaddr_storage *) &con->src->addr;
+        struct sockaddr_storage *src6 = (con->src == NULL) ? NULL : (struct sockaddr_storage *) &con->src6->addr;
+        if(!con->is_primary)
+            nsi = tcpls_new_iod(nsp, con->socket, src, sizeof(src), src6, sizeof(src6));
+        else {
+            nsi = nsiod;
+            if(src) nsock_iod_set_localaddr(nsi, src, sizeof(src));
+            if(src6) nsock_iod_set_localaddr(nsi, src6, sizeof(src6));
+            nsock_iod_tcpls_new(nsi, con->socket, tcpls);
+        }
+        printf("tcpls connect %d\n", con->socket);
+        nsock_connect_tcpls(nsp, nsi, handler, 5, NULL);
+    }
+    return 0;
+}
+
+int do_tcpls_bind(fd_list_t *client_fdlist, fd_set *master_readfds, fd_set *listen_fds){
+    int one = 1, i;
+    size_t sslen = 0;
+    init_fdlist(client_fdlist, sadd(o.conn_limit, tcpls_o->nb_ours + 1));
+    for(i = 0; i < tcpls_o->nb_ours; i++){
+        if(ours_addrs[i].storage.ss_family == AF_INET){
+            if ((listenfd[i] = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+                perror("socket(2) failed");
+                return -1;
+            }
+            sslen = sizeof(struct sockaddr_in);
+        }
+        if(ours_addrs[i].storage.ss_family == AF_INET6){
+            if ((listenfd[i] = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
+                perror("socket(2) failed");
+                return -1;
+            }
+            sslen = sizeof(struct sockaddr_in6);
+        }
+        
+        if (setsockopt(listenfd[i], SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) != 0) {
+           perror("setsockopt(SO_REUSEADDR) failed");
+           return -1;
+        }
+        
+        if (bind(listenfd[i], (struct sockaddr*) &ours_addrs[i], sslen) != 0) {
+            perror("bind(2) failed");
+            return -1;
+        }
+    
+        if (listen(listenfd[i], SOMAXCONN) != 0) {
+            perror("listen(2) failed");
+            return -1;
+        }
+        unblock_socket(listenfd[i]);
+        FD_SET(listenfd[i], master_readfds);
+        add_fd(client_fdlist, listenfd[i]);
+        FD_SET(listenfd[i], listen_fds);
+    }
+    return 0;
+}
+
+
+ptls_context_t *set_tcpls_ctx_options(int is_server){
+    if(ctx)
+        goto done;
+    ERR_load_crypto_strings();
+    OpenSSL_add_all_algorithms();
+    ctx = (ptls_context_t *)malloc(sizeof(*ctx));
+    memset(ctx, 0, sizeof(*ctx));
+    if(o.tcplscert){
+        if (ptls_load_certificates(ctx, (char *)o.tcplscert) != 0)
+            bye("failed to load certificate:%s:%s\n", o.tcplscert, strerror(errno));
+    }
+    if(o.tcplskey){
+        if(load_private_key(ctx, (char*)o.tcplskey)!=0)
+            bye("failed to load key:%s:%s\n", o.tcplskey, strerror(errno));
+    }
+    ctx->support_tcpls_options = 1;
+    ctx->random_bytes = ptls_openssl_random_bytes;
+    ctx->key_exchanges = ptls_openssl_key_exchanges;
+    ctx->cipher_suites = ptls_openssl_cipher_suites;
+    ctx->get_time = &ptls_get_time;
+done:
+    return ctx;
+}
+
+
+int do_tcpls_accept(int socket, struct sockaddr *sockaddr, socklen_t  *sslen){
+    int cfd = accept(socket, sockaddr, sslen);
+    if(cfd < 0) return cfd;
+    fprintf(stderr, "Accepting a new connection %d\n", cfd);
+    struct tcpls_con *con = (struct tcpls_con *)malloc(sizeof(*con));
+    tcpls_t *new_tcpls = tcpls_new(ctx,  1);
+    new_tcpls->socket_primary =  1;
+    tcpls_add_addrs(1, new_tcpls);
+    con->sd = cfd;
+    con->tcpls = new_tcpls;
+    assert(con->tcpls->tls->is_server);
+    list_add(tcpls_con_l, con);
+    if (tcpls_accept(new_tcpls, cfd, NULL, 0) < 0)
+        fprintf(stderr, "tcpls_accept returned -1");
+    return cfd;
+}
+
+static int handle_mpjoin(int socket, uint8_t *connid, uint8_t *cookie, uint32_t transportid, void *cbdata) {
+    return 0;
+}
+int do_tcpls_handshake(struct fdinfo *fdi){
+    int i, ret = -1;
+     for(i = 0; i < tcpls_con_l->size ; i++){
+        struct tcpls_con *con = list_get(tcpls_con_l, i);
+        if(con->sd == fdi->fd){
+            ptls_handshake_properties_t prop = {{{{NULL}}}};
+            memset(&prop, 0, sizeof(prop));
+            prop.socket = fdi->fd;
+            assert(con->tcpls);
+            assert(con->tcpls->tls);
+            assert(con->tcpls->tls->is_server);
+            assert(con->tcpls->tls->ctx);
+            assert(con->tcpls->tls->ctx->support_tcpls_options);
+            while (!ptls_handshake_is_complete(con->tcpls->tls)) {
+                if ((ret = tcpls_handshake(con->tcpls->tls, &prop)) != 0) {
+                    fprintf(stderr, "tcpls_handshake failed with ret %d\n", ret);
+                }
+                if(ret == 0)
+                   return ret;
+            }
+            fdi->tcpls = con->tcpls;
+            return ret;
+        }
+    }
+    return ret;
+}

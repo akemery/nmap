@@ -637,6 +637,7 @@ PCAP_DEPENDS
 libpcapdir
 OPENSSL_LIBS
 HAVE_OPENSSL
+HAVE_PICOTCPLS
 EGREP
 GREP
 CPP
@@ -2350,9 +2351,10 @@ IFS=$ac_save_IFS
 case $host_os in *\ *) host_os=`echo "$host_os" | sed 's/ /-/g'`;; esac
 
 
-
+use_picotcpls="yes"
 use_openssl="yes"
 specialssldir=""
+
 
 # Check whether --with-openssl was given.
 if test "${with_openssl+set}" = set; then :
@@ -4669,6 +4671,15 @@ fi
 	fi
 fi
 
+PICOTCPLS_LIBS=
+if test "$use_picotcpls" = "yes"; then
+
+$as_echo "#define HAVE_PICOTCPLS 1" >>confdefs.h
+
+  # Define in Makefile also.
+  HAVE_PICOTCPLS=yes
+fi
+
 OPENSSL_LIBS=
 if test "$use_openssl" = "yes"; then
 
@@ -4682,8 +4693,6 @@ $as_echo "#define HAVE_HTTP_DIGEST 1" >>confdefs.h
   HAVE_OPENSSL=yes
 
 fi
-
-
 
 libpcapdir=../libpcap
 
