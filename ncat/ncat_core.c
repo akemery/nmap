@@ -224,6 +224,17 @@ void options_init(void)
     o.tcpls = 0;
     o.tcplscert = NULL;
     o.tcplskey = NULL;
+    o.inputfile = NULL;
+    o.connexion_migration = 0;
+    o.inputfd = -1;
+    o.inputsd = -1;
+    o.connexion_has_migrated = 0;
+    o.sd1 = -1;
+    o.sd1h = 0;
+    o.sd2 = -1;
+    o.sd2h = 0;
+    o.sd = -1;
+    o.wants_to_write = 0;
 #endif
 }
 
@@ -370,7 +381,6 @@ int fdinfo_close(struct fdinfo *fdn)
         tcpls_free(fdn->tcpls);
     }
 #endif
-
     return close(fdn->fd);
 }
 
@@ -397,11 +407,16 @@ int fdinfo_recv(struct fdinfo *fdn, char *buf, size_t size)
 #endif
 
 #ifdef HAVE_PICOTCPLS
-   if(o.tcpls && fdn->tcpls != NULL){
-        assert(ptls_handshake_is_complete(fdn->tcpls->tls));
-        n = tcpls_receive(fdn->tcpls->tls, buf, size, NULL);
-        if(n<0)
-            logdebug("TCPLS_recv error on %d:\n", fdn->fd);
+   if(o.tcpls && fdn->tcpls){
+        ptls_buffer_t tcpls_buf;
+        ptls_buffer_init(&tcpls_buf, "", 0);
+        while((n = tcpls_receive(fdn->tcpls->tls, &tcpls_buf, 26276, NULL))==TCPLS_HOLD_DATA_TO_READ)
+           ;
+        if(n<=0)
+            logdebug("TCPLS_recv error on %d %d:\n", fdn->fd, n);
+        memcpy(buf, tcpls_buf.base, tcpls_buf.off);
+        n = tcpls_buf.off;
+        ptls_buffer_dispose(&tcpls_buf);
         return n;
     }
 #endif
@@ -485,13 +500,14 @@ int fdinfo_send(struct fdinfo *fdn, const char *buf, size_t size)
         int streamid;
         if(fdn->tcpls->streams->size == 0)
             streamid = 0;
-        else 
+        else if((fdn->tcpls->streams->size == 1) && (fdn->tcpls->next_stream_id == 2147483649))
             streamid = fdn->tcpls->streams->size;
-        assert(ptls_handshake_is_complete(fdn->tcpls->tls));
+                else
+                    streamid = 2147483649;
         n = tcpls_send(fdn->tcpls->tls, streamid, buf, size);
         if(n<0)
-            logdebug("TCPLS_send error on %d:\n", fdn->fd);
-        
+            logdebug("TCPLS_send error on %d \n", fdn->fd);
+        printf("senddata %d %d\n", n, fdn->tcpls->streams->size);
         return n;
     }
 #endif
@@ -541,14 +557,14 @@ int ncat_broadcast(fd_set *fds, const fd_list_t *fdlist, const char *msg, size_t
     if (o.recvonly)
         return size;
         
-    printf("broadcast\n");
 
     ret = 0;
     for (i = 0; i <= fdlist->fdmax; i++) {
         if (!FD_ISSET(i, fds))
             continue;
-
+        
         fdn = get_fdinfo(fdlist, i);
+        printf("broadcast %d\n", fdn->fd);
         ncat_assert(fdn != NULL);
         if (blocking_fdinfo_send(fdn, msg, size) <= 0) {
             if (o.debug > 1)

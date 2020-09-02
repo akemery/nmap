@@ -90,22 +90,18 @@ nsock_event_id nsock_readlines(nsock_pool nsp, nsock_iod ms_iod,
 nsock_event_id nsock_readbytes(nsock_pool nsp, nsock_iod ms_iod,
                                nsock_ev_handler handler, int timeout_msecs,
                                void *userdata, int nbytes) {
-
   struct niod *nsi = (struct niod *)ms_iod;
   struct npool *ms = (struct npool *)nsp;
   struct nevent *nse;
-
+  
   nse = event_new(ms, NSE_TYPE_READ, nsi, timeout_msecs, handler, userdata);
   assert(nse);
-
   nsock_log_info("Read request for %d bytes from IOD #%li [%s] EID %li",
                  nbytes, nsi->id, get_peeraddr_string(nsi), nse->id);
 
   nse->readinfo.read_type = NSOCK_READBYTES;
   nse->readinfo.num = nbytes;
-
   nsock_pool_add_event(ms, nse);
-
   return nse->id;
 }
 

@@ -160,7 +160,6 @@ static int socket_count_dec_ssl_desire(struct nevent *nse) {
   assert(nse->iod->ssl != NULL);
   assert(nse->sslinfo.ssl_desire == SSL_ERROR_WANT_READ ||
          nse->sslinfo.ssl_desire == SSL_ERROR_WANT_WRITE);
-
   if (nse->sslinfo.ssl_desire == SSL_ERROR_WANT_READ)
     return socket_count_read_dec(nse->iod);
   else
@@ -330,6 +329,11 @@ static int iod_add_event(struct niod *iod, struct nevent *nse) {
 
 /* handle_connect_results assumes that select or poll have already shown the
  * descriptor to be active */
+
+static int handle_mpjoin(int socket, uint8_t *connid, uint8_t *cookie, uint32_t transportid, void *cbdata) {
+    return 0;
+}
+
 void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status status) {
   int optval;
   socklen_t optlen = sizeof(int);
@@ -400,21 +404,23 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
 #if HAVE_PICOTCPLS
     /*start tcpls handshake*/
     if (nse->type == NSE_TYPE_CONNECT_TCPLS && !nse->event_done) {
-        int ret = 0;
         if(iod->tcpls_use_for_handshake){
-            static size_t max_early_data_size;
-            ptls_handshake_properties_t tcpls_prop = {NULL};
-            tcpls_prop.socket = iod->sd;
-            tcpls_prop.client.max_early_data_size = &max_early_data_size;
+            int ret = 0;
+            ptls_handshake_properties_t prop = {{{{NULL}}}};
+            memset(&prop, 0, sizeof(prop));
+            prop.socket = iod->sd;
+            prop.received_mpjoin_to_process = &handle_mpjoin;
             assert(iod->tcpls->tls);
             assert(iod->tcpls->tls->ctx);
             assert(iod->tcpls->tls->ctx->support_tcpls_options);
-            ret = tcpls_handshake(iod->tcpls->tls, &tcpls_prop); 
+            assert(iod->tcpls->tls->ctx->send_change_cipher_spec);
+            ret = tcpls_handshake(iod->tcpls->tls, &prop); 
+            if(ptls_handshake_is_complete(iod->tcpls->tls))
+                nse->event_done = 1;
+            else 
+                fatal("TCPLS HANSHAKE failed: %d", ret);
         }
-        if(ptls_handshake_is_complete(iod->tcpls->tls))
-            nse->event_done = 1;
-        else 
-            fatal("TCPLS HANSHAKE failed: %d", ret, NULL);
+        nse->event_done = 1;
     }
     else
 #endif
@@ -432,7 +438,6 @@ void handle_connect_result(struct npool *ms, struct nevent *nse, enum nse_status
    * don't want to execute this block again. */
   if (iod->sd != -1 && !sslconnect_inprogress) {
     int ev = EV_NONE;
-
     ev |= socket_count_read_dec(iod);
     ev |= socket_count_write_dec(iod);
     update_events(iod, ms, nse, EV_NONE, ev);
@@ -541,6 +546,7 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
   int res;
   int err;
   struct niod *iod = nse->iod;
+  
   if (status == NSE_STATUS_TIMEOUT || status == NSE_STATUS_CANCELLED) {
     nse->event_done = 1;
     nse->status = status;
@@ -556,25 +562,30 @@ void handle_write_result(struct npool *ms, struct nevent *nse, enum nse_status s
 #endif
 
 #if HAVE_PICOTCPLS
+   
     if(iod->tcpls){
       int streamid;
       if(iod->tcpls->streams->size == 0)
          streamid = 0;
-      else 
-          streamid = iod->tcpls->streams->size;
-      assert(ptls_handshake_is_complete(iod->tcpls->tls));    
+      else if((iod->tcpls->streams->size == 1) && (iod->tcpls->next_stream_id == 1))
+                streamid = 2147483649;
+           else
+                streamid = iod->tcpls->streams->size;
+      assert(ptls_handshake_is_complete(iod->tcpls->tls));
+      assert(iod->tcpls_use_for_handshake);  
+      printf("writing for %d\n", nse->iod->sd);
       res = tcpls_send (iod->tcpls->tls, streamid, str, bytesleft);
-      if(res == 0){
+      if(res >= 0){
         nse->writeinfo.written_so_far += bytesleft;
         nse->event_done = 1;
         nse->status = NSE_STATUS_SUCCESS;
       } else
-        printf("Error writing for tcpls %d %d %d %d\n", res, nse->writeinfo.written_so_far, bytesleft, streamid);
+        printf("Error writing for tcpls %d %d %d %d %d\n", res, nse->writeinfo.written_so_far, bytesleft, streamid,iod->sd);
+     
     }
-    else
+    else{
 #endif
-
-      res = ms->engine->io_operations->iod_write(ms, nse->iod->sd, str, bytesleft, 0, (struct sockaddr *)&nse->writeinfo.dest, (int)nse->writeinfo.destlen);
+      res = ms->engine->io_operations->iod_write(ms, nse->iod->sd, str, bytesleft, 0, (struct sockaddr *)&nse->writeinfo.dest, (int)nse->writeinfo.destlen);}
     if (res == bytesleft) {
       nse->event_done = 1;
       nse->status = NSE_STATUS_SUCCESS;
@@ -665,7 +676,7 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
       }
       else {
         buflen = ms->engine->io_operations->iod_read(ms, iod->sd, buf, sizeof(buf), 0, (struct sockaddr *)&peer, &peerlen);
-
+       
         /* Using recv() was failing, at least on UNIX, for non-network sockets
          * (i.e. stdin) in this case, a read() is done - as on ENOTSOCK we may
          * have a non-network socket */
@@ -677,6 +688,8 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
             buflen = read(iod->sd, buf, sizeof(buf));
           }
         }
+        
+        
       }
       if (buflen == -1) {
         err = socket_errno();
@@ -775,37 +788,47 @@ static int do_actual_read(struct npool *ms, struct nevent *nse) {
         assert(iod->tcpls);
         assert(iod->tcpls->tls);
         assert(ptls_handshake_is_complete(iod->tcpls->tls));
-        if ((buflen = tcpls_receive(iod->tcpls->tls, buf, sizeof(buf), NULL)) > 0){
+        ptls_buffer_t tcpls_buf;
+        ptls_buffer_init(&tcpls_buf, "", 0);
+        while ((buflen = tcpls_receive(iod->tcpls->tls, &tcpls_buf, 26276, NULL)) == TCPLS_HOLD_DATA_TO_READ)
+          ;
+        if (buflen < 0)
+          fprintf(stderr, "tcpls_receive return %d error code\n", buflen);
+        memcpy(buf, tcpls_buf.base, tcpls_buf.off);
+        buflen = tcpls_buf.off;
+        ptls_buffer_dispose(&tcpls_buf);
+        if(buflen > 0){
           if (fs_cat(&nse->iobuf, buf, buflen) == -1) {
             nse->event_done = 1;
             nse->status = NSE_STATUS_ERROR;
             nse->errnum = ENOMEM;
             return -1;
           }
+          if(iod->migration)
+            nsock_tcpls_connexion_migration_evt(iod, buflen);
 
           /* Sometimes a service just spews and spews data.  So we return
            * after a somewhat large amount to avoid monopolizing resources
            * and avoid DOS attacks. */
           if (fs_length(&nse->iobuf) > max_chunk)
             return fs_length(&nse->iobuf) - startlen;
-        }
-        if (buflen == -1)
-          printf("reading for tcpls error\n");
+           
+        }          
 #endif 
   }
-
+  
   if (buflen == 0) {
     nse->event_done = 1;
     nse->eof = 1;
     if (fs_length(&nse->iobuf) > 0) {
       nse->status = NSE_STATUS_SUCCESS;
       return fs_length(&nse->iobuf) - startlen;
-    } else {
+    } else if(nse->iod->tcpls){ nse->status = NSE_STATUS_SUCCESS; return 0;}
+      else {
       nse->status = NSE_STATUS_EOF;
       return 0;
     }
   }
-
   return fs_length(&nse->iobuf) - startlen;
 }
 
@@ -815,7 +838,12 @@ void handle_read_result(struct npool *ms, struct nevent *nse, enum nse_status st
   char *str;
   int rc, len;
   struct niod *iod = nse->iod;
-
+  if(nse->iod->migration && nse->iod->enable_migration){
+    nse->iod->enable_migration = 0;
+    nse->iod = nsock_tcpls_connexion_migration(nse->iod, 0);
+    nse->iod->migrated = 1;
+    return;
+  }
   if (status == NSE_STATUS_TIMEOUT) {
     nse->event_done = 1;
     if (fs_length(&nse->iobuf) > 0)
@@ -881,6 +909,9 @@ void handle_read_result(struct npool *ms, struct nevent *nse, enum nse_status st
 #endif
       ev |= socket_count_read_dec(nse->iod);
     update_events(nse->iod, ms, nse, EV_NONE, ev);
+    if(nse->iod->migration && nse->iod->enable_migration){
+        nsock_tcpls_connexion_migration(nse->iod, 0);
+    }
   }
 }
 
@@ -1044,12 +1075,14 @@ void process_event(struct npool *nsp, gh_list_t *evlist, struct nevent *nse, int
           handle_read_result(nsp, nse, NSE_STATUS_SUCCESS);
         else
 #endif
+
+#if HAVE_PICOTCPLS
+        
+#endif
         if ((!nse->iod->ssl && match_r) || match_x)
           handle_read_result(nsp, nse, NSE_STATUS_SUCCESS);
-
         if (event_timedout(nse))
           handle_read_result(nsp, nse, NSE_STATUS_TIMEOUT);
-
         break;
 
       case NSE_TYPE_WRITE:
@@ -1130,7 +1163,6 @@ void process_event(struct npool *nsp, gh_list_t *evlist, struct nevent *nse, int
       assert(nse->iod->ssl != NULL);
 
     nsock_log_debug_all("NSE #%lu: Sending event", nse->id);
-
     /* WooHoo!  The event is ready to be sent */
     event_dispatch_and_delete(nsp, nse, 1);
   }
@@ -1196,7 +1228,6 @@ void process_iod_events(struct npool *nsp, struct niod *nsi, int ev) {
        * current IOD */
       if (nse->iod != nsi)
         break;
-
       process_event(nsp, evlists[i], nse, ev);
       next = gh_lnode_next(current);
 
@@ -1217,6 +1248,7 @@ void process_iod_events(struct npool *nsp, struct niod *nsi, int ev) {
 static int nevent_unref(struct npool *nsp, struct nevent *nse) {
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
+    case NSE_TYPE_CONNECT_TCPLS:
     case NSE_TYPE_CONNECT_SSL:
       gh_list_remove(&nsp->connect_events, &nse->nodeq_io);
       break;
@@ -1423,6 +1455,7 @@ void nsock_trace_handler_callback(struct npool *ms, struct nevent *nse) {
   /* Some types have special tracing treatment */
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
+    case NSE_TYPE_CONNECT_TCPLS:
     case NSE_TYPE_CONNECT_SSL:
       nsock_log_info("Callback: %s %s %sfor EID %li [%s]",
                      nse_type2str(nse->type), nse_status2str(nse->status),

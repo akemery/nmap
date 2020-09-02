@@ -158,13 +158,6 @@
 #define SHUT_WR SD_SEND
 #endif
 
-struct conn_state {
-    nsock_iod sock_nsi;
-    nsock_iod stdin_nsi;
-    nsock_event_id idle_timer_event_id;
-    int crlf_state;
-};
-
 static struct conn_state cs = {
     NULL,
     NULL,
@@ -1016,7 +1009,6 @@ int ncat_connect(void)
 {
     nsock_pool mypool;
     int rc;
-
     /* Unless explicitly asked not to do so, ncat uses the
      * fallback nsock engine to maximize compatibility between
      * operating systems and the different use cases.
@@ -1110,7 +1102,7 @@ int ncat_connect(void)
         {
 #ifdef HAVE_PICOTCPLS
             if(o.tcpls){
-               do_tcpls_connect(mypool, cs.sock_nsi, connect_handler); 
+               do_tcpls_connect(mypool, cs.sock_nsi, connect_handler, &cs); 
             } else 
 #endif
             /* Add connection to first resolved address. */
@@ -1349,7 +1341,6 @@ static void read_stdin_handler(nsock_pool nsp, nsock_event evt, void *data)
 
     ncat_assert(type == NSE_TYPE_READ);
 
-
     if (status == NSE_STATUS_EOF) {
         if (!o.noshutdown)
             shutdown(nsock_iod_get_sd(cs.sock_nsi), SHUT_WR);
@@ -1382,6 +1373,7 @@ static void read_stdin_handler(nsock_pool nsp, nsock_event evt, void *data)
     
     nsock_write(nsp, cs.sock_nsi, write_socket_handler, -1, NULL, buf, nbytes);
     ncat_log_send(buf, nbytes);
+    
 
     if (tmp)
         free(tmp);
@@ -1395,9 +1387,10 @@ static void read_socket_handler(nsock_pool nsp, nsock_event evt, void *data)
     enum nse_type type = nse_type(evt);
     char *buf;
     int nbytes;
+    nsock_iod nsi;
     
     ncat_assert(type == NSE_TYPE_READ);
-
+    
     if (status == NSE_STATUS_EOF) {
 #ifdef WIN32
         _close(STDOUT_FILENO);
@@ -1422,19 +1415,21 @@ static void read_socket_handler(nsock_pool nsp, nsock_event evt, void *data)
     }
 
     buf = nse_readbuf(evt, &nbytes);
-
     if (o.linedelay)
         ncat_delay_timer(o.linedelay);
 
     if (o.telnet)
         dotelnet(nsock_iod_get_sd(nse_iod(evt)), (unsigned char *) buf, nbytes);
-
+        
     /* Write socket data to stdout */
     Write(STDOUT_FILENO, buf, nbytes);
     ncat_log_recv(buf, nbytes);
-
+    if((nsi = nsock_tcpls_check_migration(cs.sock_nsi))!=NULL){
+        //tcpls_nsock_remove_nsiod(cs.sock_nsi, 0);
+        cs.sock_nsi = nsi;
+    }
     nsock_readbytes(nsp, cs.sock_nsi, read_socket_handler, -1, NULL, 0);
-
+    
     refresh_idle_timer(nsp);
 }
 

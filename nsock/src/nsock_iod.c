@@ -125,6 +125,8 @@ nsock_iod nsock_iod_new2(nsock_pool nsockp, int sd, void *userdata) {
 
   nsi->userdata = userdata;
   nsi->nsp = (struct npool *)nsockp;
+  
+  printf("nsp %p %p %d\n", nsi->nsp, nsi, nsi->sd);
 
   nsi->_flags = 0;
 
@@ -157,6 +159,9 @@ nsock_iod nsock_iod_new2(nsock_pool nsockp, int sd, void *userdata) {
   
 #if HAVE_PICOTCPLS
   nsi->tcpls_use_for_handshake = 0;
+  nsi->enable_migration = 0;
+  nsi->migrated = 0;
+  nsi->migration = 0;
 #endif
 
   return (nsock_iod)nsi;
@@ -186,7 +191,6 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
   gh_lnode_t *current, *next;
 
   assert(nsi);
-
   if (nsi->state == NSIOD_STATE_DELETED) {
     /* This nsi is already marked as deleted, will probably be removed from the
      * list very soon. Just return to avoid breaking reentrancy. */
@@ -194,7 +198,7 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
   }
 
   nsock_log_info("nsock_iod_delete (IOD #%lu)", nsi->id);
-
+ 
   if (nsi->events_pending > 0) {
     /* shit -- they killed the struct niod while an event was still pending on it.
      * Maybe I should store the pending events in the iod.  On the other hand,
@@ -235,7 +239,6 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
       }
     }
   }
-
   if (nsi->events_pending != 0)
     fatal("Trying to delete NSI, but could not find %d of the purportedly pending events on that IOD.\n", nsi->events_pending);
 
@@ -243,7 +246,6 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
    * weren't already decremented to zero. */
   if (nsi->sd >= 0)
     socket_count_zero(nsi, nsi->nsp);
-
   free(nsi->hostname);
 
 #if HAVE_OPENSSL
@@ -306,7 +308,7 @@ void nsock_iod_delete(nsock_iod nsockiod, enum nsock_del_mode pending_response) 
     
 #ifdef HAVE_PICOTCPLS
   if(nsi->tcpls){
-     tcpls_free(tcpls);
+     //tcpls_free(nsi->tcpls);
   }
 #endif
 }

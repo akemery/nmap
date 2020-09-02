@@ -200,6 +200,7 @@ int nsock_event_cancel(nsock_pool ms_pool, nsock_event_id id, int notify) {
   switch (type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       event_list = &nsp->connect_events;
       break;
 
@@ -280,6 +281,7 @@ int nevent_delete(struct npool *nsp, struct nevent *nse, gh_list_t *event_list,
   switch (nse->type) {
     case NSE_TYPE_CONNECT:
     case NSE_TYPE_CONNECT_SSL:
+    case NSE_TYPE_CONNECT_TCPLS:
       handle_connect_result(nsp, nse, NSE_STATUS_CANCELLED);
       break;
 
@@ -509,6 +511,7 @@ const char *nse_type2str(enum nse_type type) {
   switch (type) {
     case NSE_TYPE_CONNECT: return "CONNECT";
     case NSE_TYPE_CONNECT_SSL: return "SSL-CONNECT";
+    case NSE_TYPE_CONNECT_TCPLS: return "TCPLS-CONNECT";
     case NSE_TYPE_READ: return "READ";
     case NSE_TYPE_WRITE: return "WRITE";
     case NSE_TYPE_TIMER: return "TIMER";
@@ -538,6 +541,5 @@ const char *nse_status2str(enum nse_status status) {
 int event_timedout(struct nevent *nse) {
   if (nse->event_done)
     return 0;
-
   return (nse->timeout.tv_sec && !TIMEVAL_AFTER(nse->timeout, nsock_tod));
 }

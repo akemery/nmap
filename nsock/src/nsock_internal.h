@@ -117,7 +117,7 @@
 #endif
 
 /* ------------------- CONSTANTS ------------------- */
-#define READ_BUFFER_SZ 8192
+#define READ_BUFFER_SZ 200000
 
 enum nsock_read_types {
   NSOCK_READLINES,
@@ -316,6 +316,9 @@ struct niod {
 #if HAVE_PICOTCPLS
   unsigned int tcpls_use_for_handshake:1;
   tcpls_t *tcpls;
+  int enable_migration;
+  int migrated;
+  int migration;
 #endif
 
 };
